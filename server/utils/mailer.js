@@ -22,7 +22,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'https://nexttrace.logistics';
 /**
  * Send an email using the configured SMTP transport
  */
-async function sendMail({ to, subject, html, text }) {
+async function sendMail({ to, subject, html, text, attachments }) {
   try {
     const info = await transporter.sendMail({
       from: `"${COMPANY_NAME}" <${COMPANY_EMAIL}>`,
@@ -30,6 +30,7 @@ async function sendMail({ to, subject, html, text }) {
       subject,
       html,
       text: text || subject,
+      attachments,
     });
     console.log(`📧 Email sent to ${to}: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
