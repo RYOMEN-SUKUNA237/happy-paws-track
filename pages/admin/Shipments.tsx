@@ -5,8 +5,8 @@ import {
 } from 'lucide-react';
 import { Shipment, Courier } from './types';
 import * as api from '../../services/api';
-import { geocodeAddress, geocodeSearch, getRoute, determineTransportModes, formatDistance, MAPBOX_TOKEN } from '../../utils/mapbox';
-import { buildTransportPlans, formatPlanDuration, TransportPlan } from '../../utils/transportPlanner';
+import { geocodeAddress, geocodeSearch, getRoute, determineTransportModes, formatDistance, MAPBOX_TOKEN, getRouteWithFallback } from '../../utils/mapbox';
+import { buildTransportPlans, formatPlanDuration, TransportPlan, RouteSegment, TransitStop } from '../../utils/transportPlanner';
 
 interface ShipmentsProps {
   shipments: Shipment[];
@@ -132,6 +132,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
   const [routePreview, setRoutePreview] = useState<{ distance: number; duration: number; modes: string[]; summary: string } | null>(null);
   const [transportPlans, setTransportPlans] = useState<TransportPlan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [routeAnalysed, setRouteAnalysed] = useState(false);
   const [planLoading, setPlanLoading] = useState(false);
   const [targetDate, setTargetDate] = useState('');
   const [pauseModal, setPauseModal] = useState<{ open: boolean; shipment: Shipment | null }>({ open: false, shipment: null });
@@ -142,7 +143,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
   const [saving, setSaving] = useState(false);
 
   const handleCreate = async () => {
-    if (!form.sender || !form.receiver || !form.origin || !form.destination) return;
+    if (!form.sender || !form.receiver || !form.origin || !form.destination || !routeAnalysed) return;
     setCreating(true);
     try {
       let originCoords: { lng: number; lat: number } | null = null;
@@ -153,21 +154,33 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
       let routeDuration: number | undefined;
       let routeSummary: string | undefined;
 
+      const selPlan = transportPlans.find(p => p.id === selectedPlanId);
+
       if (MAPBOX_TOKEN) {
         const [oGeo, dGeo] = await Promise.all([geocodeAddress(form.origin), geocodeAddress(form.destination)]);
         originCoords = oGeo;
         destCoords = dGeo;
         if (originCoords && destCoords) {
-          const route = await getRoute([originCoords.lng, originCoords.lat], [destCoords.lng, destCoords.lat]);
-          if (route) {
-            routeData = route.geometry;
-            routeDistance = route.distance;
-            routeDuration = route.duration;
-            routeSummary = route.summary;
-            const selPlan = transportPlans.find(p => p.id === selectedPlanId);
-            transportModes = selPlan
-              ? selPlan.legs.map(l => l.icon + ' ' + l.label)
-              : determineTransportModes(route.distance, form.type);
+          // Use multi-modal route data if a plan with segments is selected
+          if (selPlan && selPlan.segments && selPlan.segments.length > 0) {
+            // Concatenate all segment coordinates into one route for legacy compatibility
+            const allCoords: [number, number][] = [];
+            for (const seg of selPlan.segments) {
+              allCoords.push(...seg.coordinates);
+            }
+            routeData = { type: 'LineString', coordinates: allCoords };
+            routeDistance = selPlan.totalDistanceKm * 1000;
+            routeDuration = selPlan.totalDurationHours * 3600;
+            routeSummary = selPlan.planName;
+            transportModes = selPlan.legs.map(l => l.icon + ' ' + l.label);
+          } else {
+            const route = await getRouteWithFallback([originCoords.lng, originCoords.lat], [destCoords.lng, destCoords.lat]);
+            if (route) {
+              routeData = route.geometry;
+              routeDistance = route.distance;
+              routeDuration = route.duration;
+              transportModes = determineTransportModes(route.distance, form.type);
+            }
           }
         }
       }
@@ -192,11 +205,14 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
         route_distance: routeDistance,
         route_duration: routeDuration,
         route_summary: routeSummary,
+        multi_modal_segments: selPlan?.segments ? JSON.stringify(selPlan.segments) : undefined,
+        multi_modal_stops: selPlan?.transitStops ? JSON.stringify(selPlan.transitStops) : undefined,
       } as any);
       setForm({ sender: '', senderEmail: '', receiver: '', receiverEmail: '', origin: '', destination: '', weight: '', type: 'General', courierId: '', estimatedDelivery: '', petSpecies: '', petBreed: '', petAge: '', petColor: '', petWeight: '', petGender: '', petMicrochipId: '', petVaccinationStatus: 'up-to-date', petVetName: '', petVetPhone: '', petVetClinic: '', petCrateType: 'standard', petTempMin: '', petTempMax: '', petFeedingSchedule: '', petMedications: '', petSpecialCare: '', petOwnerConsent: false });
       setRoutePreview(null);
       setTransportPlans([]);
       setSelectedPlanId(null);
+      setRouteAnalysed(false);
       setShowCreate(false);
       onRefresh();
     } catch (err: any) {
@@ -214,9 +230,9 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
     setPlanLoading(true);
     try {
       const [oGeo, dGeo] = await Promise.all([geocodeAddress(form.origin), geocodeAddress(form.destination)]);
-      if (!oGeo || !dGeo) { console.warn('Could not geocode addresses'); return; }
+      if (!oGeo || !dGeo) { console.warn('Could not geocode addresses'); setPlanLoading(false); return; }
 
-      // Haversine fallback distance (always works)
+      // Haversine straight-line distance (always works, even cross-ocean)
       const toRad = (d: number) => (d * Math.PI) / 180;
       const R = 6371;
       const dLat = toRad(dGeo.lat - oGeo.lat);
@@ -224,30 +240,32 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
       const a = Math.sin(dLat/2)**2 + Math.cos(toRad(oGeo.lat)) * Math.cos(toRad(dGeo.lat)) * Math.sin(dLon/2)**2;
       const haversineDist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 
-      // Try road route for more accurate road distance
+      // Try road route for duration estimate
       const route = await getRoute([oGeo.lng, oGeo.lat], [dGeo.lng, dGeo.lat]);
-      const distKm = (route && route.distance > 0) ? route.distance / 1000 : haversineDist;
 
       setRoutePreview({
-        distance: distKm * 1000,
-        duration: route ? route.duration : (distKm / 80) * 3600,
+        distance: haversineDist * 1000,
+        duration: route ? route.duration : (haversineDist / 80) * 3600,
         modes: [],
         summary: route?.summary || '',
       });
 
-      const plans = await buildTransportPlans(form.origin, form.destination, [oGeo.lng, oGeo.lat], [dGeo.lng, dGeo.lat], distKm);
+      // Pass haversine as routeDistanceKm — the planner uses it to decide air/sea eligibility
+      const plans = await buildTransportPlans(form.origin, form.destination, [oGeo.lng, oGeo.lat], [dGeo.lng, dGeo.lat], haversineDist);
       setTransportPlans(plans);
       const rec = plans.find(p => p.isRecommended) || plans[0];
       if (rec) {
         setSelectedPlanId(rec.id);
         setForm(p => ({ ...p, estimatedDelivery: rec.estimatedDeliveryDate }));
       }
+      setRouteAnalysed(true);
     } catch (err) {
       console.error('Preview route error:', err);
     } finally {
       setPlanLoading(false);
     }
   };
+
 
   const handlePauseResume = (shipment: Shipment) => {
     setPauseCategory('');
@@ -643,10 +661,10 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
               )}
 
               <div className="flex gap-3 pt-2">
-                <button onClick={() => { setShowCreate(false); setRoutePreview(null); setTransportPlans([]); setSelectedPlanId(null); setTargetDate(''); }} className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
-                <button onClick={handleCreate} disabled={!form.sender || !form.receiver || !form.origin || !form.destination || creating}
+                <button onClick={() => { setShowCreate(false); setRoutePreview(null); setTransportPlans([]); setSelectedPlanId(null); setTargetDate(''); setRouteAnalysed(false); }} className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
+                <button onClick={handleCreate} disabled={!form.sender || !form.receiver || !form.origin || !form.destination || creating || !routeAnalysed}
                   className="flex-1 px-4 py-2.5 bg-[#0a192f] text-white text-sm font-medium rounded-lg hover:bg-[#112d57] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                  {creating ? <><Loader2 size={14} className="animate-spin" /> Creating...</> : 'Create Shipment'}
+                  {creating ? <><Loader2 size={14} className="animate-spin" /> Creating...</> : !routeAnalysed ? '⚠️ Run Route Analysis First' : 'Create Shipment'}
                 </button>
               </div>
             </div>

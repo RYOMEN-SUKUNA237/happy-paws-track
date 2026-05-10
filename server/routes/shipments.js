@@ -114,7 +114,8 @@ router.get('/:id/track', async (req, res) => {
               status, progress, is_paused, estimated_delivery, actual_delivery,
               cargo_type, weight, route_data, transport_modes, route_distance,
               route_duration, route_summary, created_at,
-              departed_at, paused_at, total_paused_ms
+              departed_at, paused_at, total_paused_ms,
+              multi_modal_segments, multi_modal_stops
        FROM shipments WHERE tracking_id = $1`, [req.params.id]
     );
 
@@ -127,6 +128,12 @@ router.get('/:id/track', async (req, res) => {
     }
     if (shipment.transport_modes && typeof shipment.transport_modes === 'string') {
       try { shipment.transport_modes = JSON.parse(shipment.transport_modes); } catch (e) {}
+    }
+    if (shipment.multi_modal_segments && typeof shipment.multi_modal_segments === 'string') {
+      try { shipment.multi_modal_segments = JSON.parse(shipment.multi_modal_segments); } catch (e) {}
+    }
+    if (shipment.multi_modal_stops && typeof shipment.multi_modal_stops === 'string') {
+      try { shipment.multi_modal_stops = JSON.parse(shipment.multi_modal_stops); } catch (e) {}
     }
 
     // Compute real-time progress
@@ -182,7 +189,8 @@ router.post('/', authMiddleware, async (req, res) => {
       origin, destination, origin_lat, origin_lng, dest_lat, dest_lng,
       courier_id, customer_id, weight, dimensions, cargo_type,
       description, declared_value, insurance, estimated_delivery, special_instructions,
-      route_data, transport_modes, route_distance, route_duration, route_summary
+      route_data, transport_modes, route_distance, route_duration, route_summary,
+      multi_modal_segments, multi_modal_stops
     } = req.body;
 
     if (!sender_name || !receiver_name || !origin || !destination) {
@@ -217,8 +225,8 @@ router.post('/', authMiddleware, async (req, res) => {
         status, courier_id, customer_id, weight, dimensions, cargo_type,
         description, declared_value, insurance, estimated_delivery, special_instructions,
         route_data, transport_modes, route_distance, route_duration, route_summary,
-        departed_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30) RETURNING *
+        departed_at, multi_modal_segments, multi_modal_stops
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32) RETURNING *
     `, [
       trackingId,
       sender_name, sender_email || null, sender_phone || null,
@@ -232,7 +240,9 @@ router.post('/', authMiddleware, async (req, res) => {
       route_data ? JSON.stringify(route_data) : null,
       transport_modes ? JSON.stringify(transport_modes) : null,
       route_distance || null, route_duration || null, route_summary || null,
-      departedAt
+      departedAt,
+      multi_modal_segments ? (typeof multi_modal_segments === 'string' ? multi_modal_segments : JSON.stringify(multi_modal_segments)) : null,
+      multi_modal_stops ? (typeof multi_modal_stops === 'string' ? multi_modal_stops : JSON.stringify(multi_modal_stops)) : null
     ]);
 
     const shipment = inserted[0];

@@ -1,21 +1,52 @@
-import { MAPBOX_TOKEN } from './mapbox';
+import { MAPBOX_TOKEN, getTrueRoute, generateGreatCircleArc } from './mapbox';
 
 // ─── REALISTIC TRANSPORT SPEEDS ─────────────────────────────────────
 const SPEEDS = {
-  localTruck: 60,    // km/h — city pickup/delivery
+  localTruck: 50,    // km/h — city pickup/delivery
   longHaulTruck: 80, // km/h — highway
-  plane: 900,        // km/h — cargo aircraft
+  plane: 850,        // km/h — cargo aircraft cruise
   ship: 35,          // km/h — cargo vessel (~19 knots)
-  rail: 120,         // km/h — freight rail
+  lastMile: 40,      // km/h — final delivery
 };
 
 // Fixed transfer/loading times at hubs (hours)
 const TRANSFER = {
-  airport: 4,  // security screening, loading, documentation
-  seaport: 8,  // customs, container loading
+  airportBoarding: 3,     // security screening, loading, documentation
+  airportArrival: 2,      // unloading, customs at arrival airport
+  transitBreak: 3,        // transit layover at intermediate airport
+  seaportLoading: 8,      // customs, container loading
+  seaportUnloading: 6,    // unloading, port customs
+  borderCrossing: 1.5,    // land border customs checkpoint
 };
 
+// Max continuous flight before mandatory transit (hours)
+const MAX_CONTINUOUS_FLIGHT_HOURS = 48;
+
+// Distance threshold for air transport (km) — straight-line distance
+const AIR_DISTANCE_THRESHOLD_KM = 1000;
+
 // ─── TYPES ────────────────────────────────────────────────────────────
+export interface RouteSegment {
+  mode: 'road' | 'air' | 'sea';
+  coordinates: [number, number][];
+  from: { name: string; coords: [number, number] };
+  to: { name: string; coords: [number, number] };
+  distanceKm: number;
+  durationHours: number;
+  speedKmh: number;
+  label: string;
+  icon: string;
+}
+
+export interface TransitStop {
+  name: string;
+  coords: [number, number];
+  type: 'airport' | 'seaport' | 'customs' | 'border' | 'transit_airport';
+  waitHours: number;
+  label: string;
+  icon: string;
+}
+
 export interface TransportLeg {
   mode: 'truck' | 'plane' | 'ship' | 'rail';
   icon: string;
@@ -32,14 +63,16 @@ export interface TransportPlan {
   planName: string;
   icon: string;
   legs: TransportLeg[];
+  segments: RouteSegment[];
+  transitStops: TransitStop[];
   totalDistanceKm: number;
   totalDurationHours: number;
-  estimatedDeliveryDate: string; // YYYY-MM-DD
+  estimatedDeliveryDate: string;
   isRecommended?: boolean;
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────
-function haversineKm(a: [number, number], b: [number, number]): number {
+export function haversineKm(a: [number, number], b: [number, number]): number {
   const R = 6371;
   const toRad = (d: number) => (d * Math.PI) / 180;
   const dLat = toRad(b[1] - a[1]);
@@ -65,25 +98,146 @@ export function formatPlanDuration(hours: number): string {
   return `${mins}m`;
 }
 
-async function findNearestHub(
+/** Get actual road route coordinates using Mapbox Directions API */
+async function getRoadCoordinates(
+  from: [number, number],
+  to: [number, number]
+): Promise<{ coords: [number, number][]; distKm: number; durHours: number }> {
+  try {
+    const route = await getTrueRoute(from, to, 'driving');
+    if (route?.geometry?.coordinates?.length > 2) {
+      return {
+        coords: route.geometry.coordinates as [number, number][],
+        distKm: route.distance / 1000,
+        durHours: route.duration / 3600,
+      };
+    }
+  } catch (e) {
+    console.error('Road route fetch error:', e);
+  }
+  // Fallback to straight line with haversine distance
+  const dist = haversineKm(from, to);
+  return { coords: [from, to], distKm: dist, durHours: dist / SPEEDS.longHaulTruck };
+}
+
+/**
+ * Find the nearest REAL airport or seaport using the backend CSV datasets.
+ * Falls back to Mapbox geocoding only if the backend is unavailable.
+ */
+export async function findNearestHub(
   coords: [number, number],
   type: 'airport' | 'port'
 ): Promise<{ name: string; coords: [number, number] } | null> {
+  const hubType = type === 'airport' ? 'airport' : 'seaport';
+  const [lng, lat] = coords;
+
+  // ── Try local backend API first (uses CSV datasets) ──────────────────────
+  try {
+    const backendUrl =
+      typeof window !== 'undefined'
+        ? `${(window as any).location.protocol}//${(window as any).location.hostname}:5000`
+        : 'http://localhost:5000';
+
+    const res = await fetch(
+      `${backendUrl}/api/routing/nearest-hub?lat=${lat}&lng=${lng}&type=${hubType}&limit=1`
+    );
+
+    if (res.ok) {
+      const data = await res.json();
+      const hub = data.results?.[0];
+      if (hub) {
+        const displayName = hub.iata
+          ? `${hub.name} (${hub.iata})`
+          : hub.name;
+        return { name: displayName, coords: [hub.lng, hub.lat] };
+      }
+    }
+  } catch (_e) {
+    // Backend unavailable — fall through to Mapbox geocoding
+  }
+
+  // ── Fallback: Mapbox geocoding (legacy behavior) ──────────────────────────
   if (!MAPBOX_TOKEN) return null;
   try {
-    const query = type === 'airport' ? 'international airport' : 'seaport cargo terminal';
+    const query = type === 'airport'
+      ? 'international airport'
+      : 'seaport cargo port terminal';
+
     const url =
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json` +
-      `?proximity=${coords[0]},${coords[1]}&access_token=${MAPBOX_TOKEN}&limit=1&types=poi,place`;
+      `?proximity=${lng},${lat}&access_token=${MAPBOX_TOKEN}&limit=5&types=poi`;
+
     const res = await fetch(url);
     const data = await res.json();
+
     if (data.features && data.features.length > 0) {
-      const f = data.features[0];
-      const shortName = f.place_name.split(',').slice(0, 2).join(',').trim();
-      return { name: shortName, coords: f.center as [number, number] };
+      const filtered = data.features.filter((f: any) => {
+        const name = (f.place_name || '').toLowerCase();
+        if (type === 'airport') {
+          return name.includes('airport') || name.includes('aeropuerto') ||
+            name.includes('aéroport') || name.includes('flughafen') ||
+            name.includes('aerodrome') || name.includes('aeroport');
+        } else {
+          return name.includes('port') || name.includes('terminal') ||
+            name.includes('harbour') || name.includes('harbor') ||
+            name.includes('dock') || name.includes('maritime');
+        }
+      });
+
+      const best = filtered.length > 0 ? filtered[0] : data.features[0];
+      const shortName = best.place_name.split(',').slice(0, 2).join(',').trim();
+      return { name: shortName, coords: best.center as [number, number] };
     }
   } catch (e) {
     console.error('Hub lookup error:', e);
+  }
+  return null;
+}
+
+
+/**
+ * Find a transit airport along the great-circle path between two airports.
+ * Picks a major hub airport in a country roughly midway on the route.
+ */
+async function findTransitAirport(
+  originAirport: { name: string; coords: [number, number] },
+  destAirport: { name: string; coords: [number, number] }
+): Promise<{ name: string; coords: [number, number] } | null> {
+  if (!MAPBOX_TOKEN) return null;
+
+  // Find midpoint along the great circle
+  const midLng = (originAirport.coords[0] + destAirport.coords[0]) / 2;
+  const midLat = (originAirport.coords[1] + destAirport.coords[1]) / 2;
+
+  try {
+    const url =
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent('international airport')}.json` +
+      `?proximity=${midLng},${midLat}&access_token=${MAPBOX_TOKEN}&limit=5&types=poi`;
+
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (data.features && data.features.length > 0) {
+      const airports = data.features.filter((f: any) => {
+        const name = (f.place_name || '').toLowerCase();
+        return name.includes('airport') || name.includes('aéroport') ||
+          name.includes('aeropuerto') || name.includes('aeroport');
+      });
+
+      // Pick an airport NOT the same as origin or destination airports
+      for (const f of (airports.length > 0 ? airports : data.features)) {
+        const c = f.center as [number, number];
+        const distFromOrigin = haversineKm(originAirport.coords, c);
+        const distFromDest = haversineKm(destAirport.coords, c);
+        // Must be at least 500km from both endpoints to be a valid transit
+        if (distFromOrigin > 500 && distFromDest > 500) {
+          const shortName = f.place_name.split(',').slice(0, 2).join(',').trim();
+          return { name: shortName, coords: c };
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Transit airport lookup error:', e);
   }
   return null;
 }
@@ -97,69 +251,198 @@ export async function buildTransportPlans(
   routeDistanceKm: number
 ): Promise<TransportPlan[]> {
   const plans: TransportPlan[] = [];
+  // Use straight-line (haversine) distance as the primary trigger for air/sea
+  // because road distance may be unavailable for cross-ocean routes
   const straightKm = haversineKm(originCoords, destCoords);
 
-  // ── PLAN 1: Road Only (always available) ─────────────────────────
+  // ── PLAN 1: Road Only (always offered but marked slow for long distances) ──
   {
+    const segments: RouteSegment[] = [];
+    const transitStops: TransitStop[] = [];
     const legs: TransportLeg[] = [];
-    let totalHours = 0;
 
-    if (routeDistanceKm <= 150) {
-      const dur = routeDistanceKm / SPEEDS.localTruck;
-      legs.push({ mode: 'truck', icon: '🚛', label: 'Local Delivery', from: originName, to: destName, distanceKm: Math.round(routeDistanceKm), durationHours: dur, speedKmh: SPEEDS.localTruck });
-      totalHours = dur + 0.5;
-    } else if (routeDistanceKm <= 600) {
-      const dur = routeDistanceKm / SPEEDS.longHaulTruck;
-      legs.push({ mode: 'truck', icon: '🚛', label: 'Regional Truck', from: originName, to: destName, distanceKm: Math.round(routeDistanceKm), durationHours: dur, speedKmh: SPEEDS.longHaulTruck });
-      totalHours = dur + 1;
-    } else {
-      const localKm = Math.min(80, routeDistanceKm * 0.05);
-      const hwKm = routeDistanceKm - localKm * 2;
-      const t1 = localKm / SPEEDS.localTruck;
-      const t2 = hwKm / SPEEDS.longHaulTruck;
-      const t3 = localKm / SPEEDS.localTruck;
-      legs.push({ mode: 'truck', icon: '🚛', label: 'Local Pickup', from: originName, to: 'Highway Entry', distanceKm: Math.round(localKm), durationHours: t1, speedKmh: SPEEDS.localTruck });
-      legs.push({ mode: 'truck', icon: '🚛', label: 'Long-Haul Truck', from: 'Highway Entry', to: 'Highway Exit', distanceKm: Math.round(hwKm), durationHours: t2, speedKmh: SPEEDS.longHaulTruck });
-      legs.push({ mode: 'truck', icon: '🚛', label: 'Last-Mile Delivery', from: 'Highway Exit', to: destName, distanceKm: Math.round(localKm), durationHours: t3, speedKmh: SPEEDS.localTruck });
-      totalHours = t1 + t2 + t3 + 2;
-    }
+    const road = await getRoadCoordinates(originCoords, destCoords);
+    const distKm = road.distKm;
+
+    let speed = SPEEDS.localTruck;
+    let label = 'Local Delivery';
+    if (distKm > 600) { speed = SPEEDS.longHaulTruck; label = 'Long-Haul Truck'; }
+    else if (distKm > 150) { speed = SPEEDS.longHaulTruck; label = 'Regional Truck'; }
+
+    const dur = distKm / speed;
+    const totalHours = dur + (distKm > 600 ? 2 : distKm > 150 ? 1 : 0.5);
+
+    legs.push({ mode: 'truck', icon: '🚛', label, from: originName, to: destName, distanceKm: Math.round(distKm), durationHours: dur, speedKmh: speed });
+    segments.push({ mode: 'road', coordinates: road.coords, from: { name: originName, coords: originCoords }, to: { name: destName, coords: destCoords }, distanceKm: Math.round(distKm), durationHours: dur, speedKmh: speed, label, icon: '🚛' });
 
     plans.push({
-      id: 'road', planName: 'Road Only', icon: '🚛', legs,
-      totalDistanceKm: Math.round(routeDistanceKm),
+      id: 'road', planName: 'Road Only', icon: '🚛', legs, segments, transitStops,
+      totalDistanceKm: Math.round(distKm),
       totalDurationHours: totalHours,
       estimatedDeliveryDate: hoursToDeliveryDate(totalHours + 2),
     });
   }
 
-  // ── PLAN 2: Air Freight (distance > 800 km) ───────────────────────
-  if (routeDistanceKm > 800) {
+  // ── PLAN 2: Air Freight (straight-line > 1000 km) ─────────────────
+  // Uses STRAIGHT-LINE distance so cross-ocean routes always qualify
+  if (straightKm > AIR_DISTANCE_THRESHOLD_KM) {
+    // Find nearest REAL airports to origin and destination
     const [oAirportRaw, dAirportRaw] = await Promise.all([
       findNearestHub(originCoords, 'airport'),
       findNearestHub(destCoords, 'airport'),
     ]);
-    const oAirport = oAirportRaw ?? { name: `${originName.split(',')[0]} Airport`, coords: originCoords };
-    const dAirport = dAirportRaw ?? { name: `${destName.split(',')[0]} Airport`, coords: destCoords };
 
-    const d1 = haversineKm(originCoords, oAirport.coords);
-    const d2 = haversineKm(oAirport.coords, dAirport.coords);
-    const d3 = haversineKm(dAirport.coords, destCoords);
-    const t1 = Math.max(0.5, d1 / SPEEDS.localTruck);
-    const t2 = d2 / SPEEDS.plane;
-    const t3 = Math.max(0.5, d3 / SPEEDS.localTruck);
-    const totalHours = t1 + TRANSFER.airport + t2 + TRANSFER.airport + t3;
+    const oAirport = oAirportRaw ?? {
+      name: `${originName.split(',')[0]} International Airport`,
+      coords: originCoords,
+    };
+    const dAirport = dAirportRaw ?? {
+      name: `${destName.split(',')[0]} International Airport`,
+      coords: destCoords,
+    };
+
+    // === LEG 1: Truck from origin to nearest airport (road route) ===
+    const truckToAirport = await getRoadCoordinates(originCoords, oAirport.coords);
+    const d1 = truckToAirport.distKm;
+    const t1 = Math.max(0.3, truckToAirport.durHours);
+
+    // === LEG LAST: Truck from destination airport to destination ===
+    const truckFromAirport = await getRoadCoordinates(dAirport.coords, destCoords);
+    const d3 = truckFromAirport.distKm;
+    const t3 = Math.max(0.3, truckFromAirport.durHours);
+
+    // === FLIGHT DISTANCE ===
+    const dFlight = haversineKm(oAirport.coords, dAirport.coords);
+    const directFlightHours = dFlight / SPEEDS.plane;
+    const needsTransit = directFlightHours > MAX_CONTINUOUS_FLIGHT_HOURS;
+
+    const segments: RouteSegment[] = [];
+    const transitStops: TransitStop[] = [];
+    const legs: TransportLeg[] = [];
+
+    // --- Truck to origin airport ---
+    segments.push({
+      mode: 'road',
+      coordinates: truckToAirport.coords,
+      from: { name: originName, coords: originCoords },
+      to: { name: oAirport.name, coords: oAirport.coords },
+      distanceKm: Math.round(d1),
+      durationHours: t1,
+      speedKmh: SPEEDS.localTruck,
+      label: 'Truck to Airport',
+      icon: '🚛',
+    });
+    legs.push({ mode: 'truck', icon: '🚛', label: 'Truck to Airport', from: originName, to: oAirport.name, distanceKm: Math.round(d1), durationHours: t1, speedKmh: SPEEDS.localTruck });
+
+    // --- Boarding at origin airport ---
+    transitStops.push({
+      name: oAirport.name,
+      coords: oAirport.coords,
+      type: 'airport',
+      waitHours: TRANSFER.airportBoarding,
+      label: 'Boarding & Security Check',
+      icon: '🛫',
+    });
+
+    let totalFlightHours = 0;
+
+    if (needsTransit) {
+      // Find a transit airport midway
+      const transitAirport = await findTransitAirport(oAirport, dAirport);
+
+      if (transitAirport) {
+        const dFlight1 = haversineKm(oAirport.coords, transitAirport.coords);
+        const dFlight2 = haversineKm(transitAirport.coords, dAirport.coords);
+        const tFlight1 = dFlight1 / SPEEDS.plane;
+        const tFlight2 = dFlight2 / SPEEDS.plane;
+
+        // Flight leg 1
+        const arc1 = generateGreatCircleArc(oAirport.coords, transitAirport.coords, 120);
+        segments.push({
+          mode: 'air', coordinates: arc1,
+          from: { name: oAirport.name, coords: oAirport.coords },
+          to: { name: transitAirport.name, coords: transitAirport.coords },
+          distanceKm: Math.round(dFlight1), durationHours: tFlight1,
+          speedKmh: SPEEDS.plane, label: 'Cargo Flight (Leg 1)', icon: '✈️',
+        });
+        legs.push({ mode: 'plane', icon: '✈️', label: 'Cargo Flight (Leg 1)', from: oAirport.name, to: transitAirport.name, distanceKm: Math.round(dFlight1), durationHours: tFlight1, speedKmh: SPEEDS.plane });
+
+        // Transit stop
+        transitStops.push({
+          name: transitAirport.name, coords: transitAirport.coords,
+          type: 'transit_airport', waitHours: TRANSFER.transitBreak,
+          label: 'Transit Break (Refueling & Crew Rest)', icon: '🔄',
+        });
+
+        // Flight leg 2
+        const arc2 = generateGreatCircleArc(transitAirport.coords, dAirport.coords, 120);
+        segments.push({
+          mode: 'air', coordinates: arc2,
+          from: { name: transitAirport.name, coords: transitAirport.coords },
+          to: { name: dAirport.name, coords: dAirport.coords },
+          distanceKm: Math.round(dFlight2), durationHours: tFlight2,
+          speedKmh: SPEEDS.plane, label: 'Cargo Flight (Leg 2)', icon: '✈️',
+        });
+        legs.push({ mode: 'plane', icon: '✈️', label: 'Cargo Flight (Leg 2)', from: transitAirport.name, to: dAirport.name, distanceKm: Math.round(dFlight2), durationHours: tFlight2, speedKmh: SPEEDS.plane });
+
+        totalFlightHours = tFlight1 + TRANSFER.transitBreak + tFlight2;
+      } else {
+        // No transit found — direct long flight
+        const arc = generateGreatCircleArc(oAirport.coords, dAirport.coords, 150);
+        const tFlight = dFlight / SPEEDS.plane;
+        segments.push({
+          mode: 'air', coordinates: arc,
+          from: { name: oAirport.name, coords: oAirport.coords },
+          to: { name: dAirport.name, coords: dAirport.coords },
+          distanceKm: Math.round(dFlight), durationHours: tFlight,
+          speedKmh: SPEEDS.plane, label: 'Cargo Flight', icon: '✈️',
+        });
+        legs.push({ mode: 'plane', icon: '✈️', label: 'Cargo Flight', from: oAirport.name, to: dAirport.name, distanceKm: Math.round(dFlight), durationHours: tFlight, speedKmh: SPEEDS.plane });
+        totalFlightHours = tFlight;
+      }
+    } else {
+      // Direct flight (< 48h)
+      const arc = generateGreatCircleArc(oAirport.coords, dAirport.coords, 150);
+      const tFlight = dFlight / SPEEDS.plane;
+      segments.push({
+        mode: 'air', coordinates: arc,
+        from: { name: oAirport.name, coords: oAirport.coords },
+        to: { name: dAirport.name, coords: dAirport.coords },
+        distanceKm: Math.round(dFlight), durationHours: tFlight,
+        speedKmh: SPEEDS.plane, label: 'Cargo Flight', icon: '✈️',
+      });
+      legs.push({ mode: 'plane', icon: '✈️', label: 'Cargo Flight', from: oAirport.name, to: dAirport.name, distanceKm: Math.round(dFlight), durationHours: tFlight, speedKmh: SPEEDS.plane });
+      totalFlightHours = tFlight;
+    }
+
+    // --- Customs at destination airport ---
+    transitStops.push({
+      name: dAirport.name, coords: dAirport.coords,
+      type: 'airport', waitHours: TRANSFER.airportArrival,
+      label: 'Customs & Cargo Unloading', icon: '🛬',
+    });
+
+    // --- Truck from destination airport ---
+    segments.push({
+      mode: 'road', coordinates: truckFromAirport.coords,
+      from: { name: dAirport.name, coords: dAirport.coords },
+      to: { name: destName, coords: destCoords },
+      distanceKm: Math.round(d3), durationHours: t3,
+      speedKmh: SPEEDS.lastMile, label: 'Last-Mile Delivery', icon: '🚛',
+    });
+    legs.push({ mode: 'truck', icon: '🚛', label: 'Last-Mile Delivery', from: dAirport.name, to: destName, distanceKm: Math.round(d3), durationHours: t3, speedKmh: SPEEDS.lastMile });
+
+    const totalHours = t1 + TRANSFER.airportBoarding + totalFlightHours + TRANSFER.airportArrival + t3;
+    const totalDist = Math.round(d1 + dFlight + d3);
 
     plans.push({
-      id: 'air', planName: 'Air Freight', icon: '✈️',
-      legs: [
-        { mode: 'truck', icon: '🚛', label: 'Truck to Airport', from: originName, to: oAirport.name, distanceKm: Math.round(d1), durationHours: t1, speedKmh: SPEEDS.localTruck },
-        { mode: 'plane', icon: '✈️', label: 'Cargo Flight', from: oAirport.name, to: dAirport.name, distanceKm: Math.round(d2), durationHours: t2, speedKmh: SPEEDS.plane },
-        { mode: 'truck', icon: '🚛', label: 'Last-Mile Delivery', from: dAirport.name, to: destName, distanceKm: Math.round(d3), durationHours: t3, speedKmh: SPEEDS.localTruck },
-      ],
-      totalDistanceKm: Math.round(d1 + d2 + d3),
+      id: 'air',
+      planName: needsTransit ? 'Air Freight (with Transit)' : 'Air Freight',
+      icon: '✈️', legs, segments, transitStops,
+      totalDistanceKm: totalDist,
       totalDurationHours: totalHours,
       estimatedDeliveryDate: hoursToDeliveryDate(totalHours + 4),
-      isRecommended: routeDistanceKm > 2000,
+      isRecommended: straightKm > 2000,
     });
   }
 
@@ -172,13 +455,30 @@ export async function buildTransportPlans(
     const oPort = oPortRaw ?? { name: `${originName.split(',')[0]} Seaport`, coords: originCoords };
     const dPort = dPortRaw ?? { name: `${destName.split(',')[0]} Seaport`, coords: destCoords };
 
-    const d1 = haversineKm(originCoords, oPort.coords);
+    const truckToPort = await getRoadCoordinates(originCoords, oPort.coords);
+    const truckFromPort = await getRoadCoordinates(dPort.coords, destCoords);
+    const d1 = truckToPort.distKm;
     const d2 = haversineKm(oPort.coords, dPort.coords);
-    const d3 = haversineKm(dPort.coords, destCoords);
-    const t1 = Math.max(1, d1 / SPEEDS.longHaulTruck);
+    const d3 = truckFromPort.distKm;
+    const t1 = Math.max(1, truckToPort.durHours);
     const t2 = d2 / SPEEDS.ship;
-    const t3 = Math.max(1, d3 / SPEEDS.longHaulTruck);
-    const totalHours = t1 + TRANSFER.seaport + t2 + TRANSFER.seaport + t3;
+    const t3 = Math.max(1, truckFromPort.durHours);
+
+    const seaArc = generateGreatCircleArc(oPort.coords, dPort.coords, 200);
+
+    // No transit for sea freight — ships sail continuously
+    const segments: RouteSegment[] = [
+      { mode: 'road', coordinates: truckToPort.coords, from: { name: originName, coords: originCoords }, to: { name: oPort.name, coords: oPort.coords }, distanceKm: Math.round(d1), durationHours: t1, speedKmh: SPEEDS.longHaulTruck, label: 'Truck to Seaport', icon: '🚛' },
+      { mode: 'sea', coordinates: seaArc, from: { name: oPort.name, coords: oPort.coords }, to: { name: dPort.name, coords: dPort.coords }, distanceKm: Math.round(d2), durationHours: t2, speedKmh: SPEEDS.ship, label: 'Cargo Vessel', icon: '🚢' },
+      { mode: 'road', coordinates: truckFromPort.coords, from: { name: dPort.name, coords: dPort.coords }, to: { name: destName, coords: destCoords }, distanceKm: Math.round(d3), durationHours: t3, speedKmh: SPEEDS.longHaulTruck, label: 'Last-Mile Delivery', icon: '🚛' },
+    ];
+
+    const transitStops: TransitStop[] = [
+      { name: oPort.name, coords: oPort.coords, type: 'seaport', waitHours: TRANSFER.seaportLoading, label: 'Port Customs & Container Loading', icon: '🏗️' },
+      { name: dPort.name, coords: dPort.coords, type: 'seaport', waitHours: TRANSFER.seaportUnloading, label: 'Port Customs & Unloading', icon: '🏗️' },
+    ];
+
+    const totalHours = t1 + TRANSFER.seaportLoading + t2 + TRANSFER.seaportUnloading + t3;
 
     plans.push({
       id: 'sea', planName: 'Sea Freight', icon: '🚢',
@@ -187,15 +487,16 @@ export async function buildTransportPlans(
         { mode: 'ship', icon: '🚢', label: 'Cargo Vessel', from: oPort.name, to: dPort.name, distanceKm: Math.round(d2), durationHours: t2, speedKmh: SPEEDS.ship },
         { mode: 'truck', icon: '🚛', label: 'Last-Mile Delivery', from: dPort.name, to: destName, distanceKm: Math.round(d3), durationHours: t3, speedKmh: SPEEDS.longHaulTruck },
       ],
+      segments, transitStops,
       totalDistanceKm: Math.round(d1 + d2 + d3),
       totalDurationHours: totalHours,
       estimatedDeliveryDate: hoursToDeliveryDate(totalHours + 8),
     });
   }
 
-  // Mark recommended plan (air if long, road if short)
+  // Mark recommended plan
   if (plans.length > 1 && !plans.some(p => p.isRecommended)) {
-    const rec = routeDistanceKm > 2000
+    const rec = straightKm > AIR_DISTANCE_THRESHOLD_KM
       ? plans.find(p => p.id === 'air')
       : plans.find(p => p.id === 'road');
     if (rec) rec.isRecommended = true;

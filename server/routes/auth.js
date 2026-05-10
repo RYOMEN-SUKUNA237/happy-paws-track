@@ -83,7 +83,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
 
-    // Supabase Auth succeeded
+    // Supabase Auth succeeded — return both access + refresh tokens
     res.json({
       user: {
         id: data.user.id,
@@ -91,7 +91,8 @@ router.post('/login', async (req, res) => {
         full_name: data.user.user_metadata?.full_name || 'Admin',
         role: 'admin'
       },
-      token: data.session.access_token
+      token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -204,6 +205,36 @@ router.put('/password', authMiddleware, async (req, res) => {
     res.json({ message: 'Password updated successfully.' });
   } catch (err) {
     console.error('Password change error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// POST /api/auth/refresh — exchange a refresh token for a new access token
+router.post('/refresh', async (req, res) => {
+  try {
+    const { refresh_token } = req.body;
+    if (!refresh_token) {
+      return res.status(400).json({ error: 'refresh_token is required.' });
+    }
+
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token });
+
+    if (error || !data?.session) {
+      return res.status(401).json({ error: 'Refresh token invalid or expired. Please log in again.' });
+    }
+
+    res.json({
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
+      user: {
+        id: data.user.id,
+        email: data.user.email,
+        full_name: data.user.user_metadata?.full_name || 'Admin',
+        role: 'admin',
+      },
+    });
+  } catch (err) {
+    console.error('Token refresh error:', err);
     res.status(500).json({ error: 'Internal server error.' });
   }
 });

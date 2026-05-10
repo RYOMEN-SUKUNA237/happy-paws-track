@@ -1,6 +1,9 @@
 const API_BASE = '/api';
 
-// ─── TOKEN MANAGEMENT ────────────────────────────────────────────────
+// ─── TOKEN STORAGE ─────────────────────────────────────────────────────
+// Access token: short-lived Supabase JWT (1h) OR long-lived HS256 (30d)
+// Refresh token: Supabase refresh token stored separately — used to silently renew
+
 export function getToken(): string | null {
   return localStorage.getItem('ntl_token');
 }
@@ -11,15 +14,66 @@ export function setToken(token: string): void {
 
 export function removeToken(): void {
   localStorage.removeItem('ntl_token');
+  localStorage.removeItem('ntl_refresh_token');
 }
 
 export function isAuthenticated(): boolean {
   return !!getToken();
 }
 
-// ─── BASE FETCH ──────────────────────────────────────────────────────
-async function apiFetch(endpoint: string, options: RequestInit = {}): Promise<any> {
+export function getRefreshToken(): string | null {
+  return localStorage.getItem('ntl_refresh_token');
+}
+
+export function setRefreshToken(token: string): void {
+  if (token) localStorage.setItem('ntl_refresh_token', token);
+}
+
+// ─── TOKEN REFRESH (client-side via Supabase JS) ────────────────────────
+let _refreshing: Promise<boolean> | null = null;
+
+async function tryRefreshToken(): Promise<boolean> {
+  // Deduplicate concurrent refresh attempts
+  if (_refreshing) return _refreshing;
+
+  _refreshing = (async () => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) return false;
+
+    try {
+      // Call the server's token-refresh endpoint
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.access_token) {
+          setToken(data.access_token);
+          if (data.refresh_token) setRefreshToken(data.refresh_token);
+          return true;
+        }
+      }
+    } catch (_e) {
+      // Network error — can't refresh
+    }
+    return false;
+  })();
+
+  try {
+    return await _refreshing;
+  } finally {
+    _refreshing = null;
+  }
+}
+
+// ─── BASE FETCH ──────────────────────────────────────────────────────────
+async function apiFetch(endpoint: string, options: RequestInit = {}, _retried = false): Promise<any> {
   const token = getToken();
+  const refreshToken = getRefreshToken();
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
@@ -29,28 +83,62 @@ async function apiFetch(endpoint: string, options: RequestInit = {}): Promise<an
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  // Send refresh token as a header so the server can auto-refresh if needed
+  if (refreshToken) {
+    headers['X-Refresh-Token'] = refreshToken;
+  }
+
   const res = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     headers,
   });
 
-  const data = await res.json();
+  // ── Handle server-side token refresh (server returned new tokens in headers)
+  const newAccessToken = res.headers.get('X-New-Access-Token');
+  const newRefreshToken = res.headers.get('X-New-Refresh-Token');
+  if (newAccessToken) setToken(newAccessToken);
+  if (newRefreshToken) setRefreshToken(newRefreshToken);
+
+  // ── Handle 401 — try to silently refresh once, then retry
+  if (res.status === 401 && !_retried) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      // Retry the original request with the new token
+      return apiFetch(endpoint, options, true);
+    }
+    // Refresh failed — clear tokens and throw
+    removeToken();
+    throw new Error('Session expired. Please log in again.');
+  }
+
+  // ── Parse response
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    if (!res.ok) throw new Error(`API Error ${res.status}`);
+    return {};
+  }
 
   if (!res.ok) {
-    // If unauthorized, clear token
-    if (res.status === 401) {
-      removeToken();
-    }
-    throw new Error(data.error || `API Error ${res.status}`);
+    throw new Error(data?.error || `API Error ${res.status}`);
   }
 
   return data;
 }
 
-// ─── AUTH ─────────────────────────────────────────────────────────────
+// ─── AUTH ──────────────────────────────────────────────────────────────
 export const auth = {
-  login: (username: string, password: string) =>
-    apiFetch('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  login: async (username: string, password: string) => {
+    const data = await apiFetch('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+    // Store both tokens on login
+    if (data.token) setToken(data.token);
+    if (data.refresh_token) setRefreshToken(data.refresh_token);
+    return data;
+  },
 
   register: (data: { username: string; email: string; password: string; full_name: string; phone?: string }) =>
     apiFetch('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
@@ -62,9 +150,12 @@ export const auth = {
 
   changePassword: (current_password: string, new_password: string) =>
     apiFetch('/auth/password', { method: 'PUT', body: JSON.stringify({ current_password, new_password }) }),
+
+  refresh: (refresh_token: string) =>
+    apiFetch('/auth/refresh', { method: 'POST', body: JSON.stringify({ refresh_token }) }),
 };
 
-// ─── COURIERS ─────────────────────────────────────────────────────────
+// ─── COURIERS ──────────────────────────────────────────────────────────
 export const couriers = {
   list: (params?: { status?: string; search?: string; page?: number; limit?: number }) => {
     const query = new URLSearchParams();
@@ -92,7 +183,7 @@ export const couriers = {
     apiFetch(`/couriers/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
 };
 
-// ─── CUSTOMERS ────────────────────────────────────────────────────────
+// ─── CUSTOMERS ─────────────────────────────────────────────────────────
 export const customers = {
   list: (params?: { status?: string; search?: string; type?: string; page?: number; limit?: number }) => {
     const query = new URLSearchParams();
@@ -118,7 +209,7 @@ export const customers = {
   delete: (id: string) => apiFetch(`/customers/${id}`, { method: 'DELETE' }),
 };
 
-// ─── SHIPMENTS ────────────────────────────────────────────────────────
+// ─── SHIPMENTS ─────────────────────────────────────────────────────────
 export const shipments = {
   list: (params?: { status?: string; courier_id?: string; customer_id?: string; search?: string; page?: number; limit?: number }) => {
     const query = new URLSearchParams();
@@ -159,12 +250,12 @@ export const shipments = {
   togglePause: (id: string, data?: { pause_category?: string; pause_reason?: string }) =>
     apiFetch(`/shipments/${id}/pause`, { method: 'PATCH', body: JSON.stringify(data || {}) }),
 
-  // Public endpoint - no auth required
+  // Public endpoint — no auth required
   track: (trackingId: string) =>
     fetch(`${API_BASE}/shipments/${trackingId}/track`).then(r => r.json()),
 };
 
-// ─── DASHBOARD ────────────────────────────────────────────────────────
+// ─── DASHBOARD ─────────────────────────────────────────────────────────
 export const dashboard = {
   stats: () => apiFetch('/dashboard/stats'),
   recentActivity: (limit = 20) => apiFetch(`/dashboard/recent-activity?limit=${limit}`),
@@ -175,9 +266,8 @@ export const dashboard = {
   activeMap: () => apiFetch('/dashboard/active-map'),
 };
 
-// ─── MESSAGES ────────────────────────────────────────────────────────
+// ─── MESSAGES ──────────────────────────────────────────────────────────
 export const messages = {
-  // Public endpoints (visitor)
   startConversation: (data: { visitor_id: string; visitor_name?: string; visitor_email?: string; subject?: string }) =>
     fetch(`${API_BASE}/messages/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
 
@@ -187,7 +277,6 @@ export const messages = {
   getMessages: (conversationId: number) =>
     fetch(`${API_BASE}/messages/conversations/${conversationId}/messages`).then(r => r.json()),
 
-  // Admin endpoints (auth required)
   adminListConversations: (params?: { status?: string; search?: string }) => {
     const query = new URLSearchParams();
     if (params?.status) query.set('status', params.status);
@@ -207,13 +296,11 @@ export const messages = {
     apiFetch(`/messages/admin/conversations/${id}/reopen`, { method: 'PATCH' }),
 };
 
-// ─── QUOTES ─────────────────────────────────────────────────────────
+// ─── QUOTES ────────────────────────────────────────────────────────────
 export const quotes = {
-  // Public endpoint (no auth)
   submit: (data: { full_name: string; company?: string; email: string; phone?: string; service_type: string; details?: string }) =>
     fetch(`${API_BASE}/quotes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
 
-  // Admin endpoints (auth required)
   adminList: (params?: { status?: string; service_type?: string; search?: string; page?: number; limit?: number }) => {
     const query = new URLSearchParams();
     if (params?.status) query.set('status', params.status);
@@ -225,61 +312,42 @@ export const quotes = {
   },
 
   adminGet: (id: number) => apiFetch(`/quotes/admin/${id}`),
-
   adminUpdateStatus: (id: number, data: { status: string; admin_notes?: string }) =>
     apiFetch(`/quotes/admin/${id}/status`, { method: 'PATCH', body: JSON.stringify(data) }),
-
   adminUpdateNotes: (id: number, admin_notes: string) =>
     apiFetch(`/quotes/admin/${id}/notes`, { method: 'PATCH', body: JSON.stringify({ admin_notes }) }),
-
-  adminDelete: (id: number) =>
-    apiFetch(`/quotes/admin/${id}`, { method: 'DELETE' }),
-
+  adminDelete: (id: number) => apiFetch(`/quotes/admin/${id}`, { method: 'DELETE' }),
   adminStats: () => apiFetch('/quotes/admin-stats'),
 };
 
-// ─── REVIEWS ─────────────────────────────────────────────────────────
+// ─── REVIEWS ───────────────────────────────────────────────────────────
 export const reviews = {
-  // Public: submit a review (goes to pending)
   submit: (data: { name: string; email: string; role?: string; text: string; rating: number }) =>
     fetch(`${API_BASE}/reviews`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
 
-  // Public: get approved reviews only
-  approved: () =>
-    fetch(`${API_BASE}/reviews/approved`).then(r => r.json()),
+  approved: () => fetch(`${API_BASE}/reviews/approved`).then(r => r.json()),
 
-  // Admin: list all reviews with optional filters
   adminList: (params?: { status?: string; search?: string }) => {
     const query = new URLSearchParams();
-    if (params?.status) query.set('status', params.status);
+    if (params?.status) query.set('status', params.search);
     if (params?.search) query.set('search', params.search);
     return apiFetch(`/reviews/admin?${query.toString()}`);
   },
 
-  // Admin: approve a review
-  adminApprove: (id: number) =>
-    apiFetch(`/reviews/admin/${id}/approve`, { method: 'PATCH' }),
-
-  // Admin: reject a review
+  adminApprove: (id: number) => apiFetch(`/reviews/admin/${id}/approve`, { method: 'PATCH' }),
   adminReject: (id: number, admin_notes?: string) =>
     apiFetch(`/reviews/admin/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ admin_notes }) }),
-
-  // Admin: delete a review
-  adminDelete: (id: number) =>
-    apiFetch(`/reviews/admin/${id}`, { method: 'DELETE' }),
+  adminDelete: (id: number) => apiFetch(`/reviews/admin/${id}`, { method: 'DELETE' }),
 };
 
-// ─── EMAILS ──────────────────────────────────────────────────────────
+// ─── EMAILS ────────────────────────────────────────────────────────────
 export const emails = {
-  // Public: subscribe to tracking updates
   subscribe: (data: { tracking_id: string; email: string; name?: string }) =>
     fetch(`${API_BASE}/emails/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
 
-  // Public: unsubscribe
   unsubscribe: (data: { tracking_id: string; email: string }) =>
     fetch(`${API_BASE}/emails/unsubscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
 
-  // Admin: list email drafts
   adminListDrafts: (params?: { status?: string; type?: string; search?: string }) => {
     const query = new URLSearchParams();
     if (params?.status) query.set('status', params.status);
@@ -288,26 +356,12 @@ export const emails = {
     return apiFetch(`/emails/admin/drafts?${query.toString()}`);
   },
 
-  // Admin: get single draft
   adminGetDraft: (id: number) => apiFetch(`/emails/admin/drafts/${id}`),
-
-  // Admin: update draft
   adminUpdateDraft: (id: number, data: { subject?: string; html_body?: string; text_body?: string }) =>
     apiFetch(`/emails/admin/drafts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-
-  // Admin: send draft
-  adminSendDraft: (id: number) =>
-    apiFetch(`/emails/admin/drafts/${id}/send`, { method: 'POST' }),
-
-  // Admin: cancel draft
-  adminCancelDraft: (id: number) =>
-    apiFetch(`/emails/admin/drafts/${id}/cancel`, { method: 'PATCH' }),
-
-  // Admin: delete draft
-  adminDeleteDraft: (id: number) =>
-    apiFetch(`/emails/admin/drafts/${id}`, { method: 'DELETE' }),
-
-  // Admin: list subscribers
+  adminSendDraft: (id: number) => apiFetch(`/emails/admin/drafts/${id}/send`, { method: 'POST' }),
+  adminCancelDraft: (id: number) => apiFetch(`/emails/admin/drafts/${id}/cancel`, { method: 'PATCH' }),
+  adminDeleteDraft: (id: number) => apiFetch(`/emails/admin/drafts/${id}`, { method: 'DELETE' }),
   adminListSubscribers: (trackingId?: string) => {
     const query = new URLSearchParams();
     if (trackingId) query.set('tracking_id', trackingId);
@@ -315,5 +369,5 @@ export const emails = {
   },
 };
 
-// ─── HEALTH ───────────────────────────────────────────────────────────
+// ─── HEALTH ────────────────────────────────────────────────────────────
 export const health = () => fetch(`${API_BASE}/health`).then(r => r.json());

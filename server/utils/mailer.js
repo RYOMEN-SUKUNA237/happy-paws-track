@@ -17,7 +17,12 @@ const COMPANY_NAME = 'Next Trace Logistics';
 const COMPANY_EMAIL = process.env.COMPANY_EMAIL || 'nexttracelogistics@gmail.com';
 const COMPANY_PHONE = '+1 (307) 200-8344';
 const COMPANY_ADDRESS = 'Wyoming';
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://nexttrace.logistics';
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://nexttrace.logistics').replace(/\/$/, '');
+
+// Build a deep-link to the tracking page (HashRouter: /#/track/ID)
+function trackingUrl(trackingId) {
+  return `${FRONTEND_URL}/#/track/${trackingId}`;
+}
 
 /**
  * Send an email using the configured SMTP transport
@@ -143,7 +148,7 @@ function buildSupportNotificationEmail({ visitorName, visitorEmail, messageConte
  * Build a shipment status update email for tracking subscribers
  */
 function buildTrackingUpdateEmail({ trackingId, status, statusLabel, location, notes, recipientName, pauseCategory, pauseReason }) {
-  const trackingLink = `${FRONTEND_URL}/track/${trackingId}`;
+  const trackingLink = trackingUrl(trackingId);
 
   const statusColors = {
     'pending': '#6b7280',
@@ -230,7 +235,7 @@ function buildTrackingUpdateEmail({ trackingId, status, statusLabel, location, n
  */
 function buildShipmentCreationEmail({ shipment, role }) {
   const isSender = role === 'sender';
-  const trackingLink = `${FRONTEND_URL}/track/${shipment.tracking_id}`;
+  const trackingLink = trackingUrl(shipment.tracking_id);
 
   let formattedDate = 'To be confirmed';
   if (shipment.estimated_delivery) {
@@ -339,103 +344,142 @@ function buildShipmentCreationEmail({ shipment, role }) {
   };
 }
 
+const { getPauseCategoryContent } = require('./pauseEmailHelper');
+
 /**
  * Build a shipment pause / resume notification email for the receiver.
  */
 function buildShipmentPauseEmail({ shipment, isPaused, pauseCategory, pauseReason, location, pausedAt }) {
-  const trackingLink = `${FRONTEND_URL}/track/${shipment.tracking_id}`;
-  const title = isPaused ? 'Shipment On Hold' : 'Shipment Resumed';
-  
-  let tailoredMessage = `We need to inform you that your shipment has been temporarily paused. Our team is working to resolve the situation as quickly as possible.`;
-  
-  if (isPaused && pauseCategory) {
-    if (pauseCategory.toLowerCase().includes('custom')) {
-      tailoredMessage = `Your shipment has been temporarily held at Customs for duty clearance or inspection. Please contact our support team as soon as possible for more information and to provide any necessary documentation to clear the shipment.`;
-    } else if (pauseCategory.toLowerCase().includes('weather')) {
-      tailoredMessage = `Your shipment is experiencing a delay due to severe weather conditions. We prioritize the safety of your cargo and our personnel, and transit will resume as soon as conditions improve.`;
-    } else if (pauseCategory.toLowerCase().includes('security')) {
-      tailoredMessage = `Your shipment is currently undergoing a mandatory security inspection. This is a standard procedure and we expect it to be cleared shortly.`;
-    } else if (pauseCategory.toLowerCase().includes('address')) {
-      tailoredMessage = `We encountered an issue with the delivery address provided. Please contact our support team immediately to verify and update your delivery details.`;
-    }
-  }
+  const trackingLink = trackingUrl(shipment.tracking_id);
+  const timeString = pausedAt
+    ? new Date(pausedAt).toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
+    : '';
+  const cat = isPaused ? getPauseCategoryContent(pauseCategory, location) : null;
 
-  const timeString = pausedAt ? new Date(pausedAt).toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  const pauseBodyHtml = cat ? `
+    <h2 style="color:#0a192f;font-size:20px;margin:0 0 6px 0;">⏸ Important Notice: Your Shipment is On Hold</h2>
+    <p style="color:#4a5568;font-size:14px;line-height:1.7;margin:0 0 24px 0;">
+      Dear ${shipment.receiver_name || 'Valued Customer'},<br><br>
+      We are writing to provide you with an important update regarding your shipment with <strong>${COMPANY_NAME}</strong>.
+      Please review the details below carefully.
+    </p>
+
+    <div style="background:#0a192f;border-radius:10px;padding:22px;text-align:center;margin-bottom:24px;">
+      <p style="color:#8892b0;font-size:11px;text-transform:uppercase;letter-spacing:2px;margin:0 0 6px 0;">Tracking Reference</p>
+      <p style="color:#64ffda;font-size:26px;font-weight:800;font-family:monospace;margin:0 0 14px 0;letter-spacing:3px;">${shipment.tracking_id}</p>
+      <div style="display:inline-block;background:${cat.color}22;border:1px solid ${cat.color}55;border-radius:20px;padding:8px 22px;">
+        <span style="color:${cat.color};font-size:13px;font-weight:700;">${cat.emoji} ${cat.label}</span>
+      </div>
+    </div>
+
+    <div style="background:#f8f9fb;border-radius:8px;padding:16px;margin-bottom:20px;">
+      <p style="margin:0 0 10px;font-size:11px;color:#6b7280;text-transform:uppercase;font-weight:600;letter-spacing:0.5px;">📦 Shipment Route</p>
+      <table style="width:100%;border-collapse:collapse;">
+        <tr>
+          <td style="width:45%;padding:4px 0;"><p style="margin:0;font-size:10px;color:#9ca3af;">FROM</p><p style="margin:2px 0 0;font-size:14px;font-weight:700;color:#0a192f;">${shipment.origin}</p></td>
+          <td style="text-align:center;color:#3b82f6;font-size:20px;font-weight:300;">→</td>
+          <td style="width:45%;text-align:right;padding:4px 0;"><p style="margin:0;font-size:10px;color:#9ca3af;">TO</p><p style="margin:2px 0 0;font-size:14px;font-weight:700;color:#0a192f;">${shipment.destination}</p></td>
+        </tr>
+      </table>
+    </div>
+
+    <div style="background:${cat.color}0d;border:1px solid ${cat.color}33;border-radius:10px;padding:20px;margin-bottom:20px;">
+      <p style="margin:0 0 12px;font-size:14px;font-weight:700;color:${cat.color};">${cat.emoji} ${cat.headline}</p>
+      <p style="margin:0;font-size:13px;color:#374151;line-height:1.8;">${cat.body}</p>
+    </div>
+
+    <div class="info-box" style="border-left-color:#f59e0b;">
+      <p style="margin:0 0 12px;font-size:12px;color:#6b7280;text-transform:uppercase;font-weight:600;letter-spacing:0.5px;">📋 Hold Details</p>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        ${location ? `<tr><td style="padding:5px 0;color:#6b7280;width:38%;vertical-align:top;">Current Hold Location</td><td style="color:#1f2937;font-weight:600;padding:5px 0;">📍 ${location}</td></tr>` : ''}
+        ${timeString ? `<tr><td style="padding:5px 0;color:#6b7280;vertical-align:top;">Hold Initiated</td><td style="color:#1f2937;font-weight:600;padding:5px 0;">${timeString}</td></tr>` : ''}
+        <tr><td style="padding:5px 0;color:#6b7280;vertical-align:top;">Hold Category</td><td style="color:${cat.color};font-weight:700;padding:5px 0;">${pauseCategory || 'Operational Hold'}</td></tr>
+        <tr><td style="padding:5px 0;color:#6b7280;vertical-align:top;">Route</td><td style="color:#1f2937;font-weight:600;padding:5px 0;">${shipment.origin} → ${shipment.destination}</td></tr>
+      </table>
+      ${pauseReason ? `
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid #fde68a;">
+        <p style="margin:0 0 6px;font-size:11px;color:#6b7280;text-transform:uppercase;font-weight:600;">Additional Details from Our Operations Team</p>
+        <p style="margin:0;font-size:13px;color:#1f2937;line-height:1.7;font-style:italic;border-left:3px solid #f59e0b;padding-left:12px;">"${pauseReason}"</p>
+      </div>` : ''}
+    </div>
+
+    <div class="info-box" style="border-left-color:#10b981;margin-top:16px;">
+      <p style="margin:0 0 8px;font-size:12px;color:#6b7280;text-transform:uppercase;font-weight:600;">✅ What Happens Next</p>
+      <p style="margin:0;font-size:13px;color:#1f2937;line-height:1.7;">${cat.action}</p>
+      ${cat.urgency ? `<div style="margin-top:12px;padding:10px 14px;background:#fef2f2;border-radius:6px;border:1px solid #fecaca;"><p style="margin:0;font-size:12px;color:#dc2626;font-weight:600;">⚠️ ${cat.urgency}</p></div>` : ''}
+    </div>
+  ` : `
+    <h2 style="color:#0a192f;font-size:20px;margin:0 0 8px 0;">▶️ Great News — Your Shipment is Moving Again!</h2>
+    <p style="color:#4a5568;font-size:14px;line-height:1.7;margin:0 0 20px 0;">
+      Dear ${shipment.receiver_name || 'Valued Customer'},<br><br>
+      We are delighted to inform you that your shipment with <strong>${COMPANY_NAME}</strong> has been successfully released from its hold and has resumed active transit toward its final destination.
+    </p>
+    <div style="background:#0a192f;border-radius:10px;padding:22px;text-align:center;margin-bottom:24px;">
+      <p style="color:#8892b0;font-size:11px;text-transform:uppercase;letter-spacing:2px;margin:0 0 6px 0;">Tracking Reference</p>
+      <p style="color:#64ffda;font-size:26px;font-weight:800;font-family:monospace;margin:0 0 14px 0;letter-spacing:3px;">${shipment.tracking_id}</p>
+      <div style="display:inline-block;background:#10b98122;border:1px solid #10b98155;border-radius:20px;padding:8px 22px;">
+        <span style="color:#10b981;font-size:13px;font-weight:700;">▶️ Shipment Resumed — In Transit</span>
+      </div>
+    </div>
+    <div style="background:#f8f9fb;border-radius:8px;padding:16px;margin-bottom:20px;">
+      <table style="width:100%;border-collapse:collapse;">
+        <tr>
+          <td style="width:45%;padding:4px 0;"><p style="margin:0;font-size:10px;color:#9ca3af;">FROM</p><p style="margin:2px 0 0;font-size:14px;font-weight:700;color:#0a192f;">${shipment.origin}</p></td>
+          <td style="text-align:center;color:#3b82f6;font-size:20px;">→</td>
+          <td style="width:45%;text-align:right;padding:4px 0;"><p style="margin:0;font-size:10px;color:#9ca3af;">TO</p><p style="margin:2px 0 0;font-size:14px;font-weight:700;color:#0a192f;">${shipment.destination}</p></td>
+        </tr>
+      </table>
+    </div>
+    <div class="info-box" style="border-left-color:#10b981;">
+      <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#065f46;">✅ All hold conditions have been resolved</p>
+      <p style="margin:0;font-size:13px;color:#1f2937;line-height:1.7;">Your shipment is now back in active transit and proceeding toward <strong>${shipment.destination}</strong>. Our team has cleared all previous hold conditions and your cargo is being handled with the highest priority to minimise any impact on your delivery timeline.</p>
+      ${pauseReason ? `<p style="margin:10px 0 0;font-size:13px;color:#4a5568;line-height:1.7;font-style:italic;border-left:3px solid #10b981;padding-left:12px;">"${pauseReason}"</p>` : ''}
+    </div>
+  `;
 
   const html = emailTemplate({
-    title,
+    title: isPaused ? `Shipment On Hold — ${shipment.tracking_id}` : `Shipment Resumed — ${shipment.tracking_id}`,
     preheader: isPaused
-      ? `Your shipment ${shipment.tracking_id} has been placed on hold.`
-      : `Good news — your shipment ${shipment.tracking_id} is moving again!`,
+      ? `Important update: Your shipment ${shipment.tracking_id} has been placed on hold. Please read for full details.`
+      : `Good news — your shipment ${shipment.tracking_id} is moving again toward its destination!`,
     bodyHtml: `
-      <h2 style="color:#0a192f;font-size:20px;margin:0 0 8px 0;">
-        ${isPaused ? '⏸ Shipment Placed On Hold' : '▶️ Shipment Resumed'}
-      </h2>
-      <p style="color:#4a5568;font-size:14px;line-height:1.6;margin:0 0 20px 0;">
-        ${isPaused
-          ? tailoredMessage
-          : `Great news! Your shipment is back on track and moving again toward its destination.`}
-      </p>
-
-      <div style="background:#f8f9fb;border-radius:8px;padding:16px;text-align:center;margin-bottom:20px;">
-        <p style="margin:0 0 4px;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:1px;">Tracking Number</p>
-        <p style="margin:0;font-size:22px;font-weight:800;font-family:monospace;color:#0a192f;">${shipment.tracking_id}</p>
+      ${pauseBodyHtml}
+      <hr style="border:0;height:1px;background:#e5e7eb;margin:28px 0;">
+      <p style="color:#4a5568;font-size:13px;line-height:1.6;text-align:center;margin-bottom:16px;">Track the real-time status of your shipment 24/7 using our live tracking system:</p>
+      <div style="text-align:center;margin-bottom:24px;">
+        <a href="${trackingLink}" style="display:inline-block;padding:14px 36px;background:#0a192f;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:700;font-size:14px;letter-spacing:0.5px;">Track My Shipment Live →</a>
       </div>
-
-      <div style="display:flex;align-items:center;gap:12px;background:#f8f9fb;border-radius:8px;padding:14px;margin-bottom:16px;">
-        <span style="font-size:11px;color:#6b7280;">FROM</span>
-        <strong style="color:#0a192f;font-size:13px;">${shipment.origin}</strong>
-        <span style="color:#3b82f6;">→</span>
-        <strong style="color:#0a192f;font-size:13px;">${shipment.destination}</strong>
+      <div style="text-align:center;padding:16px;background:#f8f9fb;border-radius:8px;">
+        <p style="margin:0 0 4px;font-size:12px;color:#6b7280;">Need immediate assistance?</p>
+        <p style="margin:0;font-size:13px;color:#374151;">
+          📧 <a href="mailto:${COMPANY_EMAIL}" style="color:#3b82f6;font-weight:600;">${COMPANY_EMAIL}</a>
+          &nbsp;&nbsp;|&nbsp;&nbsp;
+          📞 <strong>${COMPANY_PHONE}</strong>
+        </p>
       </div>
-
-      ${isPaused && pauseCategory ? `
-      <div class="info-box" style="border-left-color:#f59e0b;">
-        <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;text-transform:uppercase;font-weight:600;">Reason for Hold</p>
-        <p style="margin:0;color:#1f2937;font-size:14px;font-weight:600;">${pauseCategory}</p>
-        ${pauseReason ? `<p style="margin:6px 0 0;color:#4a5568;font-size:13px;">${pauseReason}</p>` : ''}
-      </div>` : ''}
-
-      ${isPaused && (location || timeString) ? `
-      <div class="info-box" style="border-left-color:#3b82f6;">
-        <p style="margin:0 0 6px 0;font-size:12px;color:#6b7280;text-transform:uppercase;font-weight:600;">Hold Details</p>
-        ${location ? `<p style="margin:0;color:#1f2937;font-size:13px;"><strong>Location:</strong> ${location}</p>` : ''}
-        ${timeString ? `<p style="margin:4px 0 0;color:#1f2937;font-size:13px;"><strong>Time:</strong> ${timeString}</p>` : ''}
-      </div>` : ''}
-
-      ${!isPaused ? `
-      <div class="info-box" style="border-left-color:#10b981;">
-        <p style="margin:0;color:#1f2937;font-size:14px;">✅ Your shipment is back in transit and will continue toward its destination on schedule.</p>
-      </div>` : ''}
-
-      <p style="color:#4a5568;font-size:13px;line-height:1.6;margin:16px 0;">
-        You can track the real-time status of your shipment at any time:
-      </p>
-      <div style="text-align:center;">
-        <a href="${trackingLink}" class="btn" style="color:#ffffff;">Track My Shipment →</a>
-      </div>
-      <p style="color:#9ca3af;font-size:12px;margin-top:20px;text-align:center;">
-        Questions? Contact us at <a href="mailto:${COMPANY_EMAIL}" style="color:#3b82f6;">${COMPANY_EMAIL}</a>
-      </p>
     `,
   });
 
   return {
     subject: isPaused
-      ? `⏸ Shipment On Hold — ${shipment.tracking_id} | ${COMPANY_NAME}`
-      : `▶️ Shipment Resumed — ${shipment.tracking_id} | ${COMPANY_NAME}`,
+      ? `⏸ Important: Shipment On Hold — ${shipment.tracking_id} | ${COMPANY_NAME}`
+      : `▶️ Shipment Resumed & In Transit — ${shipment.tracking_id} | ${COMPANY_NAME}`,
     html,
     text: isPaused
-      ? `Your shipment ${shipment.tracking_id} has been placed on hold. Reason: ${pauseCategory || 'See tracking page'}. ${pauseReason || ''} Track at: ${trackingLink}`
-      : `Your shipment ${shipment.tracking_id} has resumed and is back in transit. Track at: ${trackingLink}`,
+      ? `IMPORTANT: Your shipment ${shipment.tracking_id} (${shipment.origin} → ${shipment.destination}) is on hold. Category: ${pauseCategory || 'Operational Hold'}. ${location ? 'Held at: ' + location + '.' : ''} ${pauseReason ? 'Details: ' + pauseReason : ''} Track at: ${trackingLink} | Contact: ${COMPANY_EMAIL}`
+      : `Your shipment ${shipment.tracking_id} has resumed transit and is heading to ${shipment.destination}. Track at: ${trackingLink}`,
   };
 }
 
 /**
  * Build a shipment status change notification email for sender/receiver.
  */
+
+/**
+ * Build a shipment status change notification email for sender/receiver.
+ */
 function buildShipmentStatusChangeEmail({ shipment, newStatus, role, notes }) {
-  const trackingLink = `${FRONTEND_URL}/track/${shipment.tracking_id}`;
+  const trackingLink = trackingUrl(shipment.tracking_id);
   const isSender = role === 'sender';
 
   const statusLabels = {

@@ -179,8 +179,6 @@ const Dashboard: React.FC = () => {
         return <CustomersPage onRefresh={fetchData} />;
       case 'shipments':
         return <ShipmentsPage shipments={shipments} setShipments={setShipments} couriers={couriers} onNavigate={navigate} onRefresh={fetchData} />;
-      case 'track-map':
-        return <TrackMap shipments={shipments} setShipments={setShipments} onRefresh={fetchData} />;
       case 'messages':
         return <MessagesPage />;
       case 'quotes':
@@ -451,19 +449,27 @@ const Dashboard: React.FC = () => {
           </div>
         </header>
 
-        {/* Page Content */}
+        {/* Page Content — TrackMap stays mounted at all times to avoid blank map */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activePage}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
-            >
-              {renderPage()}
-            </motion.div>
-          </AnimatePresence>
+          {/* TrackMap: always mounted, shown/hidden via CSS */}
+          <div style={{ display: activePage === 'track-map' ? 'block' : 'none' }}>
+            <TrackMap shipments={shipments} setShipments={setShipments} onRefresh={fetchData} />
+          </div>
+
+          {/* All other pages */}
+          {activePage !== 'track-map' && (
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activePage}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+              >
+                {renderPage()}
+              </motion.div>
+            </AnimatePresence>
+          )}
         </main>
       </div>
     </div>

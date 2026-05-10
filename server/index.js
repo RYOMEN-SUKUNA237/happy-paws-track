@@ -14,6 +14,7 @@ const messageRoutes = require('./routes/messages');
 const quoteRoutes = require('./routes/quotes');
 const reviewRoutes = require('./routes/reviews');
 const emailRoutes = require('./routes/emails');
+const routingRoutes = require('./routes/routing');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -27,32 +28,35 @@ app.use(cors({
   origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Refresh-Token'],
+  exposedHeaders: ['X-New-Access-Token', 'X-New-Refresh-Token'],
 }));
 
-// Rate limiting — global
+// Rate limiting — global (generous for admin dashboard heavy usage)
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
-  max: 200,
+  max: 2000, // 2000 requests per 15 min per IP
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests. Please try again later.' },
+  skip: (req) => req.headers.authorization?.startsWith('Bearer '), // skip for authenticated requests
 });
 app.use(globalLimiter);
 
-// Strict rate limiting on auth endpoints (anti brute-force)
+// Strict rate limiting on auth login ONLY (anti brute-force) — not on /refresh
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
-  max: 15,
+  windowMs: 15 * 60 * 1000,
+  max: 30, // 30 login attempts per 15 min
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many login attempts. Please try again in 15 minutes.' },
+  skip: (req) => req.path === '/refresh', // token refresh is not brute-forceable
 });
 
 // Strict rate limiting on public endpoints (anti spam)
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests. Please slow down.' },
@@ -81,6 +85,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/quotes', publicLimiter, quoteRoutes);
 app.use('/api/reviews', publicLimiter, reviewRoutes);
 app.use('/api/emails', emailRoutes);
+app.use('/api/routing', routingRoutes);
 
 // Root route — minimal, no API map exposed
 app.get('/', (req, res) => {

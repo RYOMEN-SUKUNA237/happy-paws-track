@@ -372,3 +372,180 @@ export function computeTimeRemaining(s: ShipmentTimeData): string {
   if (hours > 0) return `${hours}h ${mins}m remaining`;
   return `${mins}m remaining`;
 }
+
+// ─── MULTI-MODAL ROUTE HELPERS ──────────────────────────────────────
+
+import type { RouteSegment, TransitStop } from './transportPlanner';
+
+export interface MultiModalPosition {
+  position: [number, number];
+  progress: number;           // 0-100 overall
+  currentSegmentIndex: number;
+  currentMode: 'road' | 'air' | 'sea' | 'transit';
+  currentLabel: string;
+  segmentProgress: number;    // 0-100 within segment
+  speedKmh: number;
+  transitStopName?: string;
+}
+
+/**
+ * Interpolate position along a multi-modal route.
+ * Takes segments + transit stops and an overall progress (0-100).
+ * Accounts for transit stop wait times proportionally.
+ */
+export function interpolateMultiModal(
+  segments: RouteSegment[],
+  transitStops: TransitStop[],
+  totalDurationHours: number,
+  progress: number
+): MultiModalPosition {
+  if (!segments || segments.length === 0) {
+    return { position: [0, 0], progress: 0, currentSegmentIndex: 0, currentMode: 'road', currentLabel: '', segmentProgress: 0, speedKmh: 0 };
+  }
+
+  const clampedProgress = Math.max(0, Math.min(100, progress));
+
+  // Build timeline: segment durations + transit stop waits interleaved
+  // Pattern: [segment0] [stop0] [segment1] [stop1] [segment2] ...
+  interface TimeSlice {
+    type: 'segment' | 'transit';
+    index: number;       // index into segments or transitStops
+    durationHours: number;
+    startFraction: number;
+    endFraction: number;
+  }
+
+  const slices: TimeSlice[] = [];
+  let totalH = 0;
+
+  for (let i = 0; i < segments.length; i++) {
+    slices.push({ type: 'segment', index: i, durationHours: segments[i].durationHours, startFraction: 0, endFraction: 0 });
+    totalH += segments[i].durationHours;
+
+    // Add transit stop after this segment if one exists at the segment's destination
+    const stop = transitStops.find(ts =>
+      Math.abs(ts.coords[0] - segments[i].to.coords[0]) < 0.1 &&
+      Math.abs(ts.coords[1] - segments[i].to.coords[1]) < 0.1
+    );
+    if (stop) {
+      slices.push({ type: 'transit', index: transitStops.indexOf(stop), durationHours: stop.waitHours, startFraction: 0, endFraction: 0 });
+      totalH += stop.waitHours;
+    }
+  }
+
+  // Calculate fraction ranges
+  let cursor = 0;
+  for (const slice of slices) {
+    slice.startFraction = cursor / totalH;
+    cursor += slice.durationHours;
+    slice.endFraction = cursor / totalH;
+  }
+
+  const progressFraction = clampedProgress / 100;
+
+  // Find which slice we're in
+  let activeSlice = slices[slices.length - 1];
+  for (const slice of slices) {
+    if (progressFraction >= slice.startFraction && progressFraction <= slice.endFraction) {
+      activeSlice = slice;
+      break;
+    }
+  }
+
+  if (activeSlice.type === 'transit') {
+    const stop = transitStops[activeSlice.index];
+    return {
+      position: stop.coords,
+      progress: clampedProgress,
+      currentSegmentIndex: activeSlice.index,
+      currentMode: 'transit',
+      currentLabel: `${stop.icon} ${stop.label}`,
+      segmentProgress: 0,
+      speedKmh: 0,
+      transitStopName: stop.name,
+    };
+  }
+
+  // We're in a segment — interpolate within it
+  const seg = segments[activeSlice.index];
+  const sliceRange = activeSlice.endFraction - activeSlice.startFraction;
+  const segProgress = sliceRange > 0
+    ? ((progressFraction - activeSlice.startFraction) / sliceRange) * 100
+    : 0;
+
+  const pos = interpolateAlongRoute(seg.coordinates, segProgress);
+
+  return {
+    position: pos,
+    progress: clampedProgress,
+    currentSegmentIndex: activeSlice.index,
+    currentMode: seg.mode,
+    currentLabel: `${seg.icon} ${seg.label}`,
+    segmentProgress: Math.round(segProgress * 10) / 10,
+    speedKmh: seg.speedKmh,
+  };
+}
+
+// ─── WEATHER (Open-Meteo — free, no API key) ────────────────────────
+
+export interface WeatherData {
+  temperature: number;      // °C
+  windSpeed: number;        // km/h
+  weatherCode: number;
+  description: string;
+  icon: string;
+}
+
+const weatherDescriptions: Record<number, { desc: string; icon: string }> = {
+  0: { desc: 'Clear Sky', icon: '☀️' },
+  1: { desc: 'Mainly Clear', icon: '🌤️' },
+  2: { desc: 'Partly Cloudy', icon: '⛅' },
+  3: { desc: 'Overcast', icon: '☁️' },
+  45: { desc: 'Fog', icon: '🌫️' },
+  48: { desc: 'Rime Fog', icon: '🌫️' },
+  51: { desc: 'Light Drizzle', icon: '🌦️' },
+  53: { desc: 'Moderate Drizzle', icon: '🌦️' },
+  55: { desc: 'Dense Drizzle', icon: '🌧️' },
+  61: { desc: 'Light Rain', icon: '🌧️' },
+  63: { desc: 'Moderate Rain', icon: '🌧️' },
+  65: { desc: 'Heavy Rain', icon: '🌧️' },
+  71: { desc: 'Light Snow', icon: '🌨️' },
+  73: { desc: 'Moderate Snow', icon: '🌨️' },
+  75: { desc: 'Heavy Snow', icon: '❄️' },
+  80: { desc: 'Rain Showers', icon: '🌧️' },
+  81: { desc: 'Moderate Showers', icon: '🌧️' },
+  82: { desc: 'Violent Showers', icon: '⛈️' },
+  95: { desc: 'Thunderstorm', icon: '⛈️' },
+  96: { desc: 'Thunderstorm + Hail', icon: '⛈️' },
+  99: { desc: 'Thunderstorm + Heavy Hail', icon: '⛈️' },
+};
+
+export async function fetchWeather(lat: number, lng: number): Promise<WeatherData | null> {
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,weather_code`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.current) {
+      const code = data.current.weather_code ?? 0;
+      const info = weatherDescriptions[code] || { desc: 'Unknown', icon: '🌡️' };
+      return {
+        temperature: Math.round(data.current.temperature_2m),
+        windSpeed: Math.round(data.current.wind_speed_10m),
+        weatherCode: code,
+        description: info.desc,
+        icon: info.icon,
+      };
+    }
+  } catch (e) {
+    console.error('Weather fetch error:', e);
+  }
+  return null;
+}
+
+// ─── ROUTE STYLE CONSTANTS FOR MULTI-MODAL ──────────────────────────
+
+export const ROUTE_STYLES = {
+  road: { color: '#0a192f', width: 5, dasharray: [1], opacity: 0.85 },
+  air:  { color: '#06b6d4', width: 4, dasharray: [8, 6], opacity: 0.9 },
+  sea:  { color: '#3b82f6', width: 4, dasharray: [4, 4], opacity: 0.85 },
+};
