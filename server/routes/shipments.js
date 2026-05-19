@@ -304,32 +304,76 @@ router.patch('/:id/status', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
     }
 
-    // Calculate progress based on status
+    const wasPaused = !!shipment.is_paused;
+    const nowBecomingPaused = status === 'paused';
+    const nowBecomingUnpaused = wasPaused && !nowBecomingPaused;
+    const nowIso = new Date().toISOString();
+
+    // ── Pause timing fields ──────────────────────────────────────────
+    // If PAUSING: record paused_at timestamp so timer freezes correctly.
+    // If RESUMING: accumulate total_paused_ms so future ETA is correct.
+    let pausedAt = shipment.paused_at;           // keep existing by default
+    let totalPausedMs = parseInt(shipment.total_paused_ms) || 0;
+    let isPaused = wasPaused;                    // keep existing by default
+
+    // Recalculate estimated_delivery when resuming — extend it by the duration of the pause.
+    // This means the arrival date shown in the table & tracking page is always accurate.
+    let newEstimatedDelivery = shipment.estimated_delivery || null;
+
+    if (nowBecomingPaused && !wasPaused) {
+      // Freshly pausing
+      pausedAt = nowIso;
+      isPaused = true;
+    } else if (nowBecomingUnpaused) {
+      // Resuming — accumulate duration of this pause session
+      let pauseDurationMs = 0;
+      if (shipment.paused_at) {
+        pauseDurationMs = Date.now() - new Date(shipment.paused_at).getTime();
+        totalPausedMs += pauseDurationMs;
+      }
+      pausedAt = null;
+      isPaused = false;
+
+      // Extend estimated_delivery by the pause duration
+      if (newEstimatedDelivery && pauseDurationMs > 0) {
+        const estStr = newEstimatedDelivery.includes('T')
+          ? newEstimatedDelivery
+          : newEstimatedDelivery + 'T23:59:59Z';
+        const newEstMs = new Date(estStr).getTime() + pauseDurationMs;
+        newEstimatedDelivery = new Date(newEstMs).toISOString().split('T')[0];
+      }
+    }
+    // ────────────────────────────────────────────────────────────────
+
+    // Keep progress frozen at current value when pausing
     const progressMap = { 'pending': 0, 'picked-up': 15, 'in-transit': 50, 'out-for-delivery': 85, 'delivered': 100, 'returned': 100, 'paused': shipment.progress };
     const progress = progressMap[status] ?? shipment.progress;
-    const isPaused = status === 'paused';
     const actualDelivery = status === 'delivered' ? new Date().toISOString().split('T')[0] : null;
 
     // Set departed_at when shipment first starts moving
     let departedAt = shipment.departed_at;
     if (!departedAt && ['picked-up', 'in-transit', 'out-for-delivery'].includes(status)) {
-      departedAt = new Date().toISOString();
+      departedAt = nowIso;
     }
 
     await pool.query(`
       UPDATE shipments SET
         status = $1, progress = $2, is_paused = $3,
-        current_lat = COALESCE($4, current_lat),
-        current_lng = COALESCE($5, current_lng),
-        actual_delivery = COALESCE($6, actual_delivery),
-        departed_at = COALESCE($7, departed_at)
-      WHERE id = $8
-    `, [status, progress, isPaused, lat || null, lng || null, actualDelivery, departedAt, shipment.id]);
+        paused_at = $4,
+        total_paused_ms = $5,
+        estimated_delivery = COALESCE($6, estimated_delivery),
+        current_lat = COALESCE($7, current_lat),
+        current_lng = COALESCE($8, current_lng),
+        actual_delivery = COALESCE($9, actual_delivery),
+        departed_at = COALESCE($10, departed_at)
+      WHERE id = $11
+    `, [status, progress, isPaused, pausedAt, totalPausedMs, newEstimatedDelivery, lat || null, lng || null, actualDelivery, departedAt, shipment.id]);
 
     // Add tracking history
+    const historyNote = notes || (nowBecomingPaused && !wasPaused ? 'Shipment paused.' : nowBecomingUnpaused ? 'Shipment resumed.' : null);
     await pool.query(
       'INSERT INTO tracking_history (shipment_id, tracking_id, status, location, lat, lng, notes, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [shipment.id, shipment.tracking_id, status, location || null, lat || null, lng || null, notes || null, req.user.username || req.user.email || 'admin']
+      [shipment.id, shipment.tracking_id, status, location || null, lat || null, lng || null, historyNote, req.user.username || req.user.email || 'admin']
     );
 
     // Update courier delivery count if delivered
@@ -337,32 +381,83 @@ router.patch('/:id/status', authMiddleware, async (req, res) => {
       await pool.query('UPDATE couriers SET total_deliveries = total_deliveries + 1 WHERE courier_id = $1', [shipment.courier_id]);
     }
 
+    // Add notification
+    if (nowBecomingPaused && !wasPaused) {
+      await pool.query('INSERT INTO notifications (title, message, type) VALUES ($1, $2, $3)', [
+        'Shipment Paused',
+        `${shipment.tracking_id}: Shipment paused via status update.`,
+        'warning'
+      ]);
+    } else if (nowBecomingUnpaused) {
+      await pool.query('INSERT INTO notifications (title, message, type) VALUES ($1, $2, $3)', [
+        'Shipment Resumed',
+        `${shipment.tracking_id}: Shipment resumed via status update.`,
+        'info'
+      ]);
+    }
+
     const { rows: updated } = await pool.query('SELECT * FROM shipments WHERE id = $1', [shipment.id]);
 
-    // ── Send status update emails BEFORE responding ──
+    // ── Send emails ──────────────────────────────────────────────────
+    // For pause/resume transitions: send the dedicated pause email (richer content).
+    // For all other status changes: send the standard status-change email.
     try {
       const recipients = [];
       if (shipment.sender_email) recipients.push({ email: shipment.sender_email, name: shipment.sender_name, role: 'sender' });
-      if (shipment.receiver_email) recipients.push({ email: shipment.receiver_email, name: shipment.receiver_name, role: 'receiver' });
-      
-      const emailPromises = recipients.map(async r => {
-        const emailData = buildShipmentStatusChangeEmail({
-          shipment,
-          newStatus: status,
-          role: r.role,
-          notes: notes || null,
+      if (shipment.receiver_email && shipment.receiver_email !== shipment.sender_email)
+        recipients.push({ email: shipment.receiver_email, name: shipment.receiver_name, role: 'receiver' });
+
+      const isPauseTransition = (nowBecomingPaused && !wasPaused) || nowBecomingUnpaused;
+
+      if (isPauseTransition) {
+        // ── Pause / Resume email (same rich template as the /pause route) ──
+        const { rows: histRows } = await pool.query(
+          'SELECT location FROM tracking_history WHERE shipment_id = $1 AND location IS NOT NULL ORDER BY created_at DESC LIMIT 1',
+          [shipment.id]
+        );
+        const lastLocation = histRows[0]?.location || null;
+
+        const emailPromises = recipients.map(async r => {
+          const emailData = buildShipmentPauseEmail({
+            shipment,
+            isPaused: nowBecomingPaused,
+            pauseCategory: nowBecomingPaused ? (notes || null) : null,
+            pauseReason: null,
+            location: nowBecomingPaused ? lastLocation : null,
+            pausedAt: nowBecomingPaused ? nowIso : null,
+          });
+          const result = await sendMail({ to: r.email, subject: emailData.subject, html: emailData.html, text: emailData.text });
+          if (result.success) {
+            await pool.query(
+              `INSERT INTO email_drafts (type, recipient_email, recipient_name, subject, html_body, text_body, status, related_tracking_id, sent_at)
+               VALUES ($1, $2, $3, $4, $5, $6, 'sent', $7, NOW())`,
+              ['tracking_update', r.email, r.name, emailData.subject, emailData.html, emailData.text, shipment.tracking_id]
+            );
+          }
+          return result;
         });
-        const result = await sendMail({ to: r.email, subject: emailData.subject, html: emailData.html, text: emailData.text });
-        if (result.success) {
-          await pool.query(
-            `INSERT INTO email_drafts (type, recipient_email, recipient_name, subject, html_body, text_body, status, related_tracking_id, sent_at)
-             VALUES ($1, $2, $3, $4, $5, $6, 'sent', $7, NOW())`,
-            ['tracking_update', r.email, r.name, emailData.subject, emailData.html, emailData.text, shipment.tracking_id]
-          );
-        }
-        return result;
-      });
-      await Promise.allSettled(emailPromises);
+        await Promise.allSettled(emailPromises);
+      } else {
+        // ── Standard status-change email ──
+        const emailPromises = recipients.map(async r => {
+          const emailData = buildShipmentStatusChangeEmail({
+            shipment,
+            newStatus: status,
+            role: r.role,
+            notes: notes || null,
+          });
+          const result = await sendMail({ to: r.email, subject: emailData.subject, html: emailData.html, text: emailData.text });
+          if (result.success) {
+            await pool.query(
+              `INSERT INTO email_drafts (type, recipient_email, recipient_name, subject, html_body, text_body, status, related_tracking_id, sent_at)
+               VALUES ($1, $2, $3, $4, $5, $6, 'sent', $7, NOW())`,
+              ['tracking_update', r.email, r.name, emailData.subject, emailData.html, emailData.text, shipment.tracking_id]
+            );
+          }
+          return result;
+        });
+        await Promise.allSettled(emailPromises);
+      }
     } catch (emailErr) {
       console.error('Status change email error:', emailErr.message);
     }
@@ -384,7 +479,7 @@ router.patch('/:id/status', authMiddleware, async (req, res) => {
           status,
           statusLabel: statusLabels[status] || status,
           location: location || null,
-          notes: notes || null,
+          notes: historyNote,
         });
       } catch (err) {
         console.error('Tracking draft error:', err.message);
@@ -458,14 +553,29 @@ router.patch('/:id/pause', authMiddleware, async (req, res) => {
         pause_category = $3, pause_reason = $4 WHERE id = $5`,
         [newStatus, nowIso, pause_category || null, pause_reason || null, shipment.id]);
     } else {
-      // Resuming: accumulate paused duration, clear reason
+      // Resuming: accumulate paused duration, clear reason, extend estimated_delivery
       let accumulatedMs = parseInt(shipment.total_paused_ms) || 0;
+      let pauseDurationMs = 0;
       if (shipment.paused_at) {
-        accumulatedMs += Date.now() - new Date(shipment.paused_at).getTime();
+        pauseDurationMs = Date.now() - new Date(shipment.paused_at).getTime();
+        accumulatedMs += pauseDurationMs;
       }
+
+      // Recalculate estimated delivery — extend it by the exact pause duration
+      let newEstDelivery = shipment.estimated_delivery || null;
+      if (newEstDelivery && pauseDurationMs > 0) {
+        const estStr = newEstDelivery.includes('T')
+          ? newEstDelivery
+          : newEstDelivery + 'T23:59:59Z';
+        const newEstMs = new Date(estStr).getTime() + pauseDurationMs;
+        newEstDelivery = new Date(newEstMs).toISOString().split('T')[0];
+      }
+
       await pool.query(`UPDATE shipments SET is_paused = FALSE, status = $1, paused_at = NULL, total_paused_ms = $2,
-        pause_category = NULL, pause_reason = NULL WHERE id = $3`,
-        [newStatus, accumulatedMs, shipment.id]);
+        pause_category = NULL, pause_reason = NULL,
+        estimated_delivery = COALESCE($3, estimated_delivery)
+        WHERE id = $4`,
+        [newStatus, accumulatedMs, newEstDelivery, shipment.id]);
     }
 
     await pool.query(
