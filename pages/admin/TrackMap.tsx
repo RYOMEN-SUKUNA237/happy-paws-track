@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MapPin, Pause, Play, Navigation, Clock, Package, Truck, RefreshCw, LocateFixed, Maximize2, Minimize2, Map, List, Loader2, X } from 'lucide-react';
+import { MapPin, Pause, Play, Navigation, Clock, Package, Truck, RefreshCw, LocateFixed, Maximize2, Minimize2, Map, List, Loader2, X, Edit, Search } from 'lucide-react';
 import { Shipment } from './types';
 import * as api from '../../services/api';
 import mapboxgl from 'mapbox-gl';
-import { MAPBOX_TOKEN, initMapbox, interpolateAlongRoute, interpolateMultiModal, formatDistance, formatDuration, computeTimeBasedProgress, computeTimeRemaining, getRouteWithFallback, ROUTE_STYLES, ROUTE_STYLE } from '../../utils/mapbox';
+import { MAPBOX_TOKEN, initMapbox, interpolateAlongRoute, interpolateMultiModal, formatDistance, formatDuration, computeTimeBasedProgress, computeTimeRemaining, getRouteWithFallback, ROUTE_STYLES, ROUTE_STYLE, snapCoordsToRoute, haversineDistance, geocodeSearch } from '../../utils/mapbox';
 import type { RouteSegment, TransitStop } from '../../utils/transportPlanner';
 
 interface TrackMapProps { shipments: Shipment[]; setShipments: React.Dispatch<React.SetStateAction<Shipment[]>>; onRefresh: () => void; }
@@ -27,9 +27,36 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
   const [optimisticPause, setOptimisticPause] = useState<Record<string, boolean>>({});
   const [pauseToast, setPauseToast] = useState<string | null>(null);
 
+  // Alter Position State
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [alterProgress, setAlterProgress] = useState(0);
+  const [alterLocationName, setAlterLocationName] = useState('');
+  const [alterLat, setAlterLat] = useState<number | null>(null);
+  const [alterLng, setAlterLng] = useState<number | null>(null);
+  const [locationQuery, setLocationQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<Array<{ lng: number; lat: number; place_name: string }>>([]);
+  const [isSubmittingAlter, setIsSubmittingAlter] = useState(false);
+
   const activeShipments = shipments.filter(s => ['in-transit','out-for-delivery','paused','picked-up'].includes(s.status));
   const selected = selectedId ? activeShipments.find(s => s.trackingId === selectedId) : null;
   const selectedFull = selectedId ? fullData[selectedId] : null;
+
+  // Selected ref for Mapbox events
+  const selectedFullRef = useRef<any>(null);
+  
+  // Sync select ref and reset alter states when selected shipment changes
+  useEffect(() => {
+    selectedFullRef.current = selectedFull;
+    if (selectedFull) {
+      const initialProg = Math.round(computeTimeBasedProgress(selectedFull));
+      setAlterProgress(initialProg);
+      setAlterLocationName('');
+      setAlterLat(null);
+      setAlterLng(null);
+      setLocationQuery('');
+      setSuggestions([]);
+    }
+  }, [selectedFull]);
 
   // Load full data for all shipments
   useEffect(() => {
@@ -66,6 +93,21 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     return () => obs.disconnect();
   }, []);
 
+  const handleMapClickSnap = useCallback((snappedProgress: number, snappedCoords: [number, number]) => {
+    setAlterProgress(Math.round(snappedProgress));
+    setAlterLat(snappedCoords[1]);
+    setAlterLng(snappedCoords[0]);
+    const name = `Snapped Route Point (${snappedProgress.toFixed(0)}%)`;
+    setAlterLocationName(name);
+    setLocationQuery(name);
+    setIsPanelOpen(true);
+  }, []);
+
+  const handleMapClickSnapRef = useRef(handleMapClickSnap);
+  useEffect(() => {
+    handleMapClickSnapRef.current = handleMapClickSnap;
+  }, [handleMapClickSnap]);
+
   // Init map
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
@@ -75,6 +117,21 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     m.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
     m.on('style.load', () => { try { m.setFog({ color:'rgb(10,25,47)','high-color':'rgb(20,40,80)','horizon-blend':0.08,'space-color':'rgb(5,10,20)','star-intensity':0.6 }); } catch {} });
     m.on('load', () => setMapReady(true));
+    
+    m.on('click', (e) => {
+      if (selectedFullRef.current && selectedFullRef.current.route_data?.coordinates?.length > 1) {
+        const routeCoords = selectedFullRef.current.route_data.coordinates;
+        const clickCoords: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+        const { progress: snappedProgress, snappedCoords } = snapCoordsToRoute(routeCoords, clickCoords);
+        const distance = haversineDistance(clickCoords, snappedCoords);
+        
+        // If click is within 150 km of the route, snap it!
+        if (distance < 150) {
+          handleMapClickSnapRef.current(snappedProgress, snappedCoords);
+        }
+      }
+    });
+
     map.current = m;
     return () => { m.remove(); map.current = null; };
   }, []);
@@ -141,13 +198,14 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     // Live position marker
     const stops: TransitStop[] | null = s.multi_modal_stops;
     let pos: [number, number] | null = null;
+    const effectiveProgress = isPanelOpen ? alterProgress : progress;
     if (segments && segments.length > 0 && stops) {
       const totalDur = s.route_duration ? s.route_duration / 3600 : segments.reduce((a: number, sg: RouteSegment) => a + sg.durationHours, 0);
-      pos = interpolateMultiModal(segments, stops, totalDur, progress).position;
+      pos = interpolateMultiModal(segments, stops, totalDur, effectiveProgress).position;
     } else if (s.route_data?.coordinates?.length > 0) {
-      pos = interpolateAlongRoute(s.route_data.coordinates, progress);
+      pos = interpolateAlongRoute(s.route_data.coordinates, effectiveProgress);
     } else if (s.origin_lat && s.dest_lat) {
-      const p = progress / 100;
+      const p = effectiveProgress / 100;
       pos = [Number(s.origin_lng) + (Number(s.dest_lng) - Number(s.origin_lng)) * p, Number(s.origin_lat) + (Number(s.dest_lat) - Number(s.origin_lat)) * p];
     }
     if (pos) {
@@ -155,7 +213,7 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
       el.innerHTML = `<div style="position:relative"><div style="width:22px;height:22px;border-radius:50%;background:${color};opacity:.25;position:absolute;top:-3px;left:-3px;animation:ping 1.5s infinite"></div><div style="width:16px;height:16px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,.3);position:relative;z-index:1"></div></div>`;
       markersRef.current.push(new mapboxgl.Marker({ element: el }).setLngLat(pos).addTo(m));
     }
-  }, [selectedId, mapReady, selectedFull, progress]);
+  }, [selectedId, mapReady, selectedFull, progress, isPanelOpen, alterProgress]);
 
   const handlePauseResume = async () => {
     if (!selected || pausing) return;
@@ -185,6 +243,64 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
       setTimeout(() => setPauseToast(null), 4000);
     } finally {
       setPausing(false);
+    }
+  };
+
+  const handleLocationSearch = async (val: string) => {
+    setLocationQuery(val);
+    if (val.trim().length > 2) {
+      try {
+        const results = await geocodeSearch(val);
+        setSuggestions(results);
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      setSuggestions([]);
+    }
+  };
+
+  const handleSelectSuggestion = (sug: { lng: number; lat: number; place_name: string }) => {
+    if (!selectedFull || !selectedFull.route_data?.coordinates) return;
+    const { progress: snappedProgress, snappedCoords } = snapCoordsToRoute(selectedFull.route_data.coordinates, [sug.lng, sug.lat]);
+    setAlterProgress(Math.round(snappedProgress));
+    setAlterLat(snappedCoords[1]);
+    setAlterLng(snappedCoords[0]);
+    setAlterLocationName(sug.place_name);
+    setLocationQuery(sug.place_name);
+    setSuggestions([]);
+  };
+
+  const handleSliderChange = (val: number) => {
+    setAlterProgress(val);
+    if (selectedFull && selectedFull.route_data?.coordinates?.length > 1) {
+      const coords = interpolateAlongRoute(selectedFull.route_data.coordinates, val);
+      setAlterLng(coords[0]);
+      setAlterLat(coords[1]);
+      setAlterLocationName(`Route Point (${val}%)`);
+      setLocationQuery(`Route Point (${val}%)`);
+    }
+  };
+
+  const handleApplyAlter = async () => {
+    if (!selected || isSubmittingAlter) return;
+    setIsSubmittingAlter(true);
+    try {
+      await api.shipments.alterLocation(selected.trackingId, {
+        progress: alterProgress,
+        location_name: alterLocationName,
+        lat: alterLat || undefined,
+        lng: alterLng || undefined,
+      });
+      setPauseToast(`✅ Location altered to ${alterProgress}%`);
+      setTimeout(() => setPauseToast(null), 3000);
+      setIsPanelOpen(false);
+      onRefresh();
+    } catch (e: any) {
+      setPauseToast(`❌ Alter failed: ${e.message}`);
+      setTimeout(() => setPauseToast(null), 4000);
+    } finally {
+      setIsSubmittingAlter(false);
     }
   };
 
@@ -336,6 +452,132 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
                     <div><p className="text-gray-400 uppercase text-[10px]">Courier</p><p className="font-semibold text-[#0a192f]">{selected.courierName}</p></div>
                     {selectedFull.route_duration && <div><p className="text-gray-400 uppercase text-[10px]">Est. Time</p><p className="font-semibold text-[#0a192f]">{formatDuration(selectedFull.route_duration)}</p></div>}
                   </div>
+
+                  {/* Collapsible Alter Location Card */}
+                  <div className="px-4 pb-3 border-t border-gray-100 pt-3">
+                    <button
+                      onClick={() => setIsPanelOpen(!isPanelOpen)}
+                      className="flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
+                    >
+                      <Edit size={13} />
+                      {isPanelOpen ? "Hide Position Alter Options" : "Alter Shipment Position (Admin)"}
+                    </button>
+
+                    <AnimatePresence>
+                      {isPanelOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden mt-3 space-y-3 bg-gray-50 p-3 rounded-xl border border-gray-200"
+                        >
+                          <p className="text-[11px] text-gray-500">
+                            Adjust the delivery position along the track using one of the three synchronized methods below. Click **"Apply"** to save changes.
+                          </p>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {/* Method 1 & 3: Slider + Input */}
+                            <div className="space-y-2">
+                              <label className="block text-[10px] font-bold text-gray-400 uppercase">
+                                Methods 1 & 3: Progress Slider & Percent
+                              </label>
+                              <div className="flex items-center gap-3">
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="100"
+                                  value={alterProgress}
+                                  onChange={(e) => handleSliderChange(Number(e.target.value))}
+                                  className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                />
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    value={alterProgress}
+                                    onChange={(e) => handleSliderChange(Math.max(0, Math.min(100, Number(e.target.value))))}
+                                    className="w-12 px-1.5 py-1 text-xs text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono font-bold"
+                                  />
+                                  <span className="text-xs text-gray-500">%</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Method 2: Location Search Snapping */}
+                            <div className="space-y-2 relative">
+                              <label className="block text-[10px] font-bold text-gray-400 uppercase">
+                                Method 2: Snap to Location on Route
+                              </label>
+                              <div className="relative">
+                                <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center text-gray-400 pointer-events-none">
+                                  <Search size={12} />
+                                </span>
+                                <input
+                                  type="text"
+                                  placeholder="Type city or point along route..."
+                                  value={locationQuery}
+                                  onChange={(e) => handleLocationSearch(e.target.value)}
+                                  className="w-full pl-7 pr-3 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                              </div>
+
+                              {suggestions.length > 0 && (
+                                <div className="absolute left-0 right-0 z-30 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                                  {suggestions.map((sug, idx) => (
+                                    <div
+                                      key={idx}
+                                      onClick={() => handleSelectSuggestion(sug)}
+                                      className="px-2.5 py-1.5 text-[11px] text-gray-700 hover:bg-blue-50 cursor-pointer truncate border-b border-gray-50 last:border-b-0"
+                                    >
+                                      {sug.place_name}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Quick Map Snapping Tip */}
+                          <div className="flex items-center gap-1.5 bg-blue-50/50 border border-blue-100 rounded-lg p-2 text-[10px] text-blue-700">
+                            <span className="flex-shrink-0">📍</span>
+                            <span>
+                              <strong>Interactive Tip:</strong> You can also click directly on the route line on the map. The marker will immediately snap to the clicked point!
+                            </span>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex justify-end gap-2 pt-1 border-t border-gray-200/60">
+                            <button
+                              onClick={() => {
+                                setIsPanelOpen(false);
+                                setAlterProgress(Math.round(computeTimeBasedProgress(selectedFull)));
+                                setAlterLocationName('');
+                                setAlterLat(null);
+                                setAlterLng(null);
+                                setLocationQuery('');
+                              }}
+                              className="px-3 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleApplyAlter}
+                              disabled={isSubmittingAlter}
+                              className="flex items-center gap-1 px-3.5 py-1 text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 rounded-lg shadow transition-colors disabled:opacity-60"
+                            >
+                              {isSubmittingAlter ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                "Apply Position Alter"
+                              )}
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
                   <div className="px-4 pb-3">
                     <div className="w-full bg-gray-200 rounded-full h-2">
                       <div className="h-2 rounded-full transition-all" style={{ width:`${Math.round(progress)}%`, background: STATUS_COLORS[selected.status]||'#3b82f6' }}/>

@@ -25,12 +25,12 @@ function computeProgress(shipment) {
   const departedMs  = new Date(shipment.departed_at).getTime();
   const estStr      = String(shipment.estimated_delivery);
   const estimatedMs = new Date(estStr.includes('T') ? estStr : estStr + 'T00:00:00.000Z').getTime();
-  const totalDur    = estimatedMs - departedMs;
+  const totalPausedMs = parseInt(shipment.total_paused_ms) || 0;
+  const totalDur    = estimatedMs - departedMs - totalPausedMs;
   if (totalDur <= 0) return 100;
 
   const nowMs         = Date.now();
-  const pausedMs      = parseInt(shipment.total_paused_ms) || 0;
-  const elapsedActive = (nowMs - departedMs) - pausedMs;
+  const elapsedActive = (nowMs - departedMs) - totalPausedMs;
   const pct           = Math.max(0, Math.min(100, (elapsedActive / totalDur) * 100));
   return Math.round(pct * 10) / 10;
 }
@@ -704,6 +704,81 @@ router.patch('/:id/pause', authMiddleware, async (req, res) => {
     res.json({ shipment: enrichShipment(updated[0]) });
   } catch (err) {
     console.error('Pause/Resume error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// PATCH /api/shipments/:id/alter-location — Alter location/progress
+router.patch('/:id/alter-location', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM shipments WHERE id::text = $1 OR tracking_id = $1', [req.params.id]);
+    const shipment = rows[0];
+    if (!shipment) return res.status(404).json({ error: 'Shipment not found.' });
+
+    const { progress, location_name, lat, lng } = req.body;
+    if (progress === undefined || progress < 0 || progress > 100) {
+      return res.status(400).json({ error: 'Invalid progress percentage. Must be between 0 and 100.' });
+    }
+
+    const prgNum = parseFloat(progress);
+
+    // If shipment is not in a terminal state or pending, mathematically adjust timeline to lock progress
+    let newDeparted = shipment.departed_at;
+    let newEstimated = shipment.estimated_delivery;
+
+    if (!['pending', 'delivered', 'returned'].includes(shipment.status) && shipment.departed_at && shipment.estimated_delivery) {
+      const departedMs = new Date(shipment.departed_at).getTime();
+      const estStr = String(shipment.estimated_delivery).includes('T')
+        ? String(shipment.estimated_delivery)
+        : String(shipment.estimated_delivery) + 'T00:00:00.000Z';
+      const estimatedMs = new Date(estStr).getTime();
+      const totalPausedMs = parseInt(shipment.total_paused_ms) || 0;
+      const D_transit = estimatedMs - departedMs - totalPausedMs;
+
+      if (D_transit > 0) {
+        const anchorMs = shipment.is_paused && shipment.paused_at
+          ? new Date(shipment.paused_at).getTime()
+          : Date.now();
+
+        const newDepartedMs = anchorMs - totalPausedMs - (prgNum / 100) * D_transit;
+        newDeparted = new Date(newDepartedMs).toISOString();
+        newEstimated = new Date(newDepartedMs + D_transit + totalPausedMs).toISOString();
+      }
+    }
+
+    // Update in database
+    await pool.query(`
+      UPDATE shipments
+      SET progress = $1,
+          current_lat = COALESCE($2, current_lat),
+          current_lng = COALESCE($3, current_lng),
+          departed_at = COALESCE($4, departed_at),
+          estimated_delivery = COALESCE($5, estimated_delivery)
+      WHERE id = $6
+    `, [prgNum, lat !== undefined ? parseFloat(lat) : null, lng !== undefined ? parseFloat(lng) : null, newDeparted, newEstimated, shipment.id]);
+
+    // Insert a detailed log in tracking_history
+    const actionNotes = `Location altered to ${Math.round(prgNum)}%` + (location_name ? ` (${location_name})` : '') + ' by administrator.';
+    await pool.query(
+      'INSERT INTO tracking_history (shipment_id, tracking_id, status, location, lat, lng, notes, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+      [
+        shipment.id,
+        shipment.tracking_id,
+        shipment.status,
+        location_name || 'En Route',
+        lat !== undefined ? parseFloat(lat) : null,
+        lng !== undefined ? parseFloat(lng) : null,
+        actionNotes,
+        req.user.username || req.user.email || 'admin'
+      ]
+    );
+
+    // Fetch the updated shipment to return it
+    const { rows: updated } = await pool.query('SELECT * FROM shipments WHERE id = $1', [shipment.id]);
+    res.json({ shipment: enrichShipment(updated[0]) });
+
+  } catch (err) {
+    console.error('Alter location error:', err);
     res.status(500).json({ error: 'Internal server error.' });
   }
 });

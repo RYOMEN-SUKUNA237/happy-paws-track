@@ -250,6 +250,9 @@ export const shipments = {
   togglePause: (id: string, data?: { pause_category?: string; pause_reason?: string }) =>
     apiFetch(`/shipments/${id}/pause`, { method: 'PATCH', body: JSON.stringify(data || {}) }),
 
+  alterLocation: (id: string, data: { progress: number; location_name?: string; lat?: number; lng?: number }) =>
+    apiFetch(`/shipments/${id}/alter-location`, { method: 'PATCH', body: JSON.stringify(data) }),
+
   // Public endpoint — no auth required
   track: (trackingId: string) =>
     fetch(`${API_BASE}/shipments/${trackingId}/track`).then(r => r.json()),

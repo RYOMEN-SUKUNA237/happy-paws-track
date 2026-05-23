@@ -332,12 +332,12 @@ export function computeTimeBasedProgress(s: ShipmentTimeData): number {
     ? s.estimated_delivery
     : s.estimated_delivery + 'T00:00:00.000Z';
   const estimatedMs = new Date(estStr).getTime();
-  const totalDur    = estimatedMs - departedMs;
+  const totalPausedMs = Number(s.total_paused_ms) || 0;
+  const totalDur    = estimatedMs - departedMs - totalPausedMs;
   if (totalDur <= 0) return 100;
 
   const nowMs         = Date.now();
-  const pausedMs      = s.total_paused_ms || 0;
-  const elapsedActive = (nowMs - departedMs) - pausedMs;
+  const elapsedActive = (nowMs - departedMs) - totalPausedMs;
   const pct           = Math.max(0, Math.min(100, (elapsedActive / totalDur) * 100));
 
   // Never let the live ticker fall behind the server-computed value
@@ -360,9 +360,8 @@ export function computeTimeRemaining(s: ShipmentTimeData): string {
   const estimatedMs = new Date(estStr).getTime();
 
   const nowMs       = Date.now();
-  const pausedMs    = s.total_paused_ms || 0;
-  // Remaining = ETA - now - (time still being paused, i.e. don't count pause as transit)
-  const remainingMs = Math.max(0, estimatedMs - nowMs + pausedMs);
+  // Remaining time is simply the duration from now to the estimated delivery date
+  const remainingMs = Math.max(0, estimatedMs - nowMs);
 
   if (remainingMs <= 0) return 'Arriving now';
 
@@ -552,3 +551,83 @@ export const ROUTE_STYLES = {
   air:  { color: '#06b6d4', width: 4, dasharray: [8, 6], opacity: 0.9 },
   sea:  { color: '#3b82f6', width: 4, dasharray: [4, 4], opacity: 0.85 },
 };
+
+export function haversineDistance(p1: [number, number], p2: [number, number]): number {
+  const R = 6371; // km
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(p2[1] - p1[1]);
+  const dLon = toRad(p2[0] - p1[0]);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(p1[1])) * Math.cos(toRad(p2[1])) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+export function snapCoordsToRoute(
+  routeCoords: [number, number][],
+  clickCoords: [number, number]
+): { progress: number; snappedCoords: [number, number] } {
+  if (!routeCoords || routeCoords.length < 2) {
+    return { progress: 0, snappedCoords: routeCoords?.[0] || clickCoords };
+  }
+
+  const P_x = clickCoords[0];
+  const P_y = clickCoords[1];
+
+  let minDistanceSq = Infinity;
+  let bestSegIndex = 0;
+  let bestSnapped: [number, number] = routeCoords[0];
+
+  for (let i = 0; i < routeCoords.length - 1; i++) {
+    const A = routeCoords[i];
+    const B = routeCoords[i + 1];
+
+    const A_x = A[0];
+    const A_y = A[1];
+    const B_x = B[0];
+    const B_y = B[1];
+
+    const dx = B_x - A_x;
+    const dy = B_y - A_y;
+
+    let t = 0;
+    if (dx !== 0 || dy !== 0) {
+      t = ((P_x - A_x) * dx + (P_y - A_y) * dy) / (dx * dx + dy * dy);
+      t = Math.max(0, Math.min(1, t));
+    }
+
+    const C_x = A_x + t * dx;
+    const C_y = A_y + t * dy;
+
+    const distSq = (P_x - C_x) ** 2 + (P_y - C_y) ** 2;
+
+    if (distSq < minDistanceSq) {
+      minDistanceSq = distSq;
+      bestSegIndex = i;
+      bestSnapped = [C_x, C_y];
+    }
+  }
+
+  // Calculate cumulative distance to bestSnapped
+  let totalDistance = 0;
+  let distanceToSnapped = 0;
+
+  for (let i = 0; i < routeCoords.length - 1; i++) {
+    const segDist = haversineDistance(routeCoords[i], routeCoords[i + 1]);
+    totalDistance += segDist;
+
+    if (i < bestSegIndex) {
+      distanceToSnapped += segDist;
+    } else if (i === bestSegIndex) {
+      distanceToSnapped += haversineDistance(routeCoords[i], bestSnapped);
+    }
+  }
+
+  const progress = totalDistance > 0 ? Math.max(0, Math.min(100, (distanceToSnapped / totalDistance) * 100)) : 0;
+
+  return {
+    progress,
+    snappedCoords: bestSnapped,
+  };
+}
+

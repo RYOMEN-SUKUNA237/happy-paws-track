@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { Shipment, Courier } from './types';
 import * as api from '../../services/api';
-import { geocodeAddress, geocodeSearch, getRoute, determineTransportModes, formatDistance, MAPBOX_TOKEN, getRouteWithFallback } from '../../utils/mapbox';
+import { geocodeAddress, geocodeSearch, getRoute, determineTransportModes, formatDistance, MAPBOX_TOKEN, getRouteWithFallback, snapCoordsToRoute, interpolateAlongRoute } from '../../utils/mapbox';
 import { buildTransportPlans, formatPlanDuration, TransportPlan, RouteSegment, TransitStop } from '../../utils/transportPlanner';
 
 interface ShipmentsProps {
@@ -141,6 +141,108 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
   const [editModal, setEditModal] = useState<{ open: boolean; shipment: Shipment | null }>({ open: false, shipment: null });
   const [editForm, setEditForm] = useState({ senderName: '', senderEmail: '', receiverName: '', receiverEmail: '', estimatedDelivery: '', description: '', specialInstructions: '' });
   const [saving, setSaving] = useState(false);
+
+  // Alter Location States
+  const [isAltering, setIsAltering] = useState(false);
+  const [alterProgress, setAlterProgress] = useState(0);
+  const [alterLocationName, setAlterLocationName] = useState('');
+  const [alterLat, setAlterLat] = useState<number | null>(null);
+  const [alterLng, setAlterLng] = useState<number | null>(null);
+  const [locationQuery, setLocationQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<Array<{ lng: number; lat: number; place_name: string }>>([]);
+  const [isSubmittingAlter, setIsSubmittingAlter] = useState(false);
+  const [alterToast, setAlterToast] = useState<string | null>(null);
+
+  // Sync selected shipment for alteration when selectedShipment changes
+  React.useEffect(() => {
+    if (selectedShipment) {
+      const fullShipment = shipments.find(s => s.id === selectedShipment.id);
+      let parse = (v: any) => { if (!v) return null; let p = v; while (typeof p === 'string') { try { p = JSON.parse(p); } catch { break; } } return p; };
+      const routeDataParsed = fullShipment ? parse(fullShipment.route_data) : null;
+      
+      (selectedShipment as any).route_data_parsed = routeDataParsed;
+
+      setAlterProgress(Math.round(selectedShipment.progress || 0));
+      setAlterLocationName('');
+      setAlterLat(null);
+      setAlterLng(null);
+      setLocationQuery('');
+      setSuggestions([]);
+      setIsAltering(false);
+    }
+  }, [selectedShipment, shipments]);
+
+  const handleLocationSearch = async (val: string) => {
+    setLocationQuery(val);
+    if (val.trim().length > 2) {
+      try {
+        const results = await geocodeSearch(val);
+        setSuggestions(results);
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      setSuggestions([]);
+    }
+  };
+
+  const handleSelectSuggestion = (sug: { lng: number; lat: number; place_name: string }) => {
+    if (!selectedShipment) return;
+    const parsedRoute = (selectedShipment as any).route_data_parsed;
+    if (!parsedRoute || !parsedRoute.coordinates) return;
+    
+    const { progress: snappedProgress, snappedCoords } = snapCoordsToRoute(parsedRoute.coordinates, [sug.lng, sug.lat]);
+    setAlterProgress(Math.round(snappedProgress));
+    setAlterLat(snappedCoords[1]);
+    setAlterLng(snappedCoords[0]);
+    setAlterLocationName(sug.place_name);
+    setLocationQuery(sug.place_name);
+    setSuggestions([]);
+  };
+
+  const handleSliderChange = (val: number) => {
+    setAlterProgress(val);
+    if (selectedShipment) {
+      const parsedRoute = (selectedShipment as any).route_data_parsed;
+      if (parsedRoute && parsedRoute.coordinates?.length > 1) {
+        const coords = interpolateAlongRoute(parsedRoute.coordinates, val);
+        setAlterLng(coords[0]);
+        setAlterLat(coords[1]);
+        setAlterLocationName(`Route Point (${val}%)`);
+        setLocationQuery(`Route Point (${val}%)`);
+      }
+    }
+  };
+
+  const handleApplyAlter = async () => {
+    if (!selectedShipment || isSubmittingAlter) return;
+    setIsSubmittingAlter(true);
+    try {
+      await api.shipments.alterLocation(selectedShipment.trackingId, {
+        progress: alterProgress,
+        location_name: alterLocationName,
+        lat: alterLat || undefined,
+        lng: alterLng || undefined,
+      });
+      setAlterToast(`✅ Location altered to ${alterProgress}%`);
+      setTimeout(() => setAlterToast(null), 3000);
+      setIsAltering(false);
+      
+      setShipments(prev => prev.map(s => 
+        s.id === selectedShipment.id ? { ...s, progress: alterProgress } : s
+      ));
+      
+      setSelectedShipment(prev => prev ? { ...prev, progress: alterProgress } : null);
+      
+      if (onRefresh) onRefresh();
+    } catch (e: any) {
+      setAlterToast(`❌ Alter failed: ${e.message}`);
+      setTimeout(() => setAlterToast(null), 4000);
+    } finally {
+      setIsSubmittingAlter(false);
+    }
+  };
+
 
   const handleCreate = async () => {
     if (!form.sender || !form.receiver || !form.origin || !form.destination || !routeAnalysed) return;
@@ -724,6 +826,132 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                   </p>
                 )}
               </div>
+
+              {/* Collapsible Alter Location Card for detail modal */}
+              {['in-transit', 'out-for-delivery', 'paused', 'picked-up'].includes(selectedShipment.status) && (
+                <div className="border-t border-gray-100 pt-3">
+                  <button
+                    onClick={() => setIsAltering(!isAltering)}
+                    className="flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
+                  >
+                    <Edit2 size={13} />
+                    {isAltering ? "Hide Position Alter Options" : "Alter Shipment Position (Admin)"}
+                  </button>
+
+                  {alterToast && (
+                    <div className="mt-2 p-2 bg-blue-50 border border-blue-200 text-xs font-semibold text-blue-800 rounded-lg text-center animate-fade-in">
+                      {alterToast}
+                    </div>
+                  )}
+
+                  <AnimatePresence>
+                    {isAltering && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="overflow-hidden mt-3 space-y-3 bg-gray-50 p-3 rounded-xl border border-gray-200 text-xs"
+                      >
+                        <p className="text-[11px] text-gray-500">
+                          Adjust the delivery position along the track using one of the two synchronized methods below. Click **"Apply"** to save changes.
+                        </p>
+
+                        <div className="space-y-3">
+                          {/* Method 1 & 3: Slider + Input */}
+                          <div className="space-y-2">
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase">
+                              Methods 1 & 3: Progress Slider & Percent
+                            </label>
+                            <div className="flex items-center gap-3">
+                              <input
+                                type="range"
+                                min="0"
+                                max="100"
+                                value={alterProgress}
+                                onChange={(e) => handleSliderChange(Number(e.target.value))}
+                                className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                              />
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  value={alterProgress}
+                                  onChange={(e) => handleSliderChange(Math.max(0, Math.min(100, Number(e.target.value))))}
+                                  className="w-12 px-1.5 py-1 text-xs text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono font-bold"
+                                />
+                                <span className="text-xs text-gray-500">%</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Method 2: Location Search Snapping */}
+                          <div className="space-y-2 relative">
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase">
+                              Method 2: Snap to Location on Route
+                            </label>
+                            <div className="relative">
+                              <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center text-gray-400 pointer-events-none">
+                                <Search size={12} />
+                              </span>
+                              <input
+                                type="text"
+                                placeholder="Type city or point along route..."
+                                value={locationQuery}
+                                onChange={(e) => handleLocationSearch(e.target.value)}
+                                className="w-full pl-7 pr-3 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+
+                            {suggestions.length > 0 && (
+                              <div className="absolute left-0 right-0 z-30 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                                {suggestions.map((sug, idx) => (
+                                  <div
+                                    key={idx}
+                                    onClick={() => handleSelectSuggestion(sug)}
+                                    className="px-2.5 py-1.5 text-[11px] text-gray-700 hover:bg-blue-50 cursor-pointer truncate border-b border-gray-50 last:border-b-0"
+                                  >
+                                    {sug.place_name}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex justify-end gap-2 pt-1 border-t border-gray-200/60">
+                          <button
+                            onClick={() => {
+                              setIsAltering(false);
+                              setAlterProgress(Math.round(selectedShipment.progress || 0));
+                              setAlterLocationName('');
+                              setAlterLat(null);
+                              setAlterLng(null);
+                              setLocationQuery('');
+                            }}
+                            className="px-3 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleApplyAlter}
+                            disabled={isSubmittingAlter}
+                            className="flex items-center gap-1 px-3.5 py-1 text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 rounded-lg shadow transition-colors disabled:opacity-60"
+                          >
+                            {isSubmittingAlter ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              "Apply Position Alter"
+                            )}
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+
               <div className="flex gap-2 pt-2">
                 {selectedShipment.type === 'Live Animals' ? (
                   <div className="w-full space-y-3">
