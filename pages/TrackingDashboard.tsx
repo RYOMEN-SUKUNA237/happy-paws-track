@@ -438,8 +438,15 @@ const TrackingDashboard: React.FC = () => {
                         <div className="flex items-start gap-2">
                           <Clock size={14} className="text-gray-400 mt-0.5 flex-shrink-0" />
                           <div>
-                            <p className="text-[10px] text-gray-400 uppercase">Est. Delivery</p>
-                            <p className="font-medium text-[#0a192f]">{shipment.estimated_delivery}</p>
+                            <p className="text-[10px] text-gray-400 uppercase">Est. Arrival</p>
+                            <p className="font-medium text-[#0a192f]">
+                              {(() => {
+                                const d = new Date(String(shipment.estimated_delivery));
+                                return isNaN(d.getTime())
+                                  ? shipment.estimated_delivery
+                                  : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+                              })()}
+                            </p>
                             {liveEta && <p className="text-[10px] text-blue-600 font-medium mt-0.5">{liveEta}</p>}
                           </div>
                         </div>

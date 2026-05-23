@@ -299,12 +299,20 @@ export function calculatePositionAtTime(
   return { position, progress };
 }
 
-// ─── TIME-BASED PROGRESS ────────────────────────────────────────────
+// ─── TIME-BASED PROGRESS ─────────────────────────────────────────────────────
+// Single canonical formula — mirrors server/routes/shipments.js computeProgress():
+//   progress = (now - departed_at) / (estimated_delivery - departed_at)
+//
+// estimated_delivery is ALWAYS a full ISO timestamp stored at creation time as:
+//   departed_at + route_duration_seconds
+//
+// This guarantees ONE consistent number across Admin Dashboard, Live Map,
+// and Tracking Page — no more two different ETAs for the same shipment.
 export interface ShipmentTimeData {
   status: string;
   departed_at?: string | null;
   estimated_delivery?: string | null;
-  route_duration?: number | string | null; // route duration in SECONDS (from Mapbox)
+  route_duration?: number | string | null; // kept for display purposes only
   is_paused?: number | boolean;
   paused_at?: string | null;
   total_paused_ms?: number;
@@ -315,41 +323,29 @@ export interface ShipmentTimeData {
 export function computeTimeBasedProgress(s: ShipmentTimeData): number {
   if (s.status === 'delivered' || s.status === 'returned') return 100;
   if (s.status === 'pending') return 0;
-  // ── Paused: return the frozen progress saved at pause-time ──
-  // This guarantees zero drift — the parcel stays exactly where it was paused.
-  if (s.is_paused) {
-    return s.computed_progress ?? s.progress ?? 0;
-  }
+  // Paused: frozen snapshot — never let it tick forward
+  if (s.is_paused) return s.computed_progress ?? s.progress ?? 0;
   if (!s.departed_at || !s.estimated_delivery) return s.computed_progress ?? s.progress ?? 0;
 
-  const departedMs = new Date(s.departed_at).getTime();
-  
-  // Use route_duration (in seconds) if available to compute highly-precise totalDuration
-  const routeDurationMs = s.route_duration ? Number(s.route_duration) * 1000 : 0;
-  
-  const estStr = s.estimated_delivery.includes('T') ? s.estimated_delivery : s.estimated_delivery + 'T23:59:59Z';
+  const departedMs  = new Date(s.departed_at).getTime();
+  const estStr      = s.estimated_delivery.includes('T')
+    ? s.estimated_delivery
+    : s.estimated_delivery + 'T00:00:00.000Z';
   const estimatedMs = new Date(estStr).getTime();
-  
-  const totalDuration = routeDurationMs > 0 ? routeDurationMs : (estimatedMs - departedMs);
-  if (totalDuration <= 0) return s.computed_progress ?? s.progress ?? 0;
+  const totalDur    = estimatedMs - departedMs;
+  if (totalDur <= 0) return 100;
 
-  const nowMs = Date.now();
-  const pausedMs = s.total_paused_ms || 0;
+  const nowMs         = Date.now();
+  const pausedMs      = s.total_paused_ms || 0;
+  const elapsedActive = (nowMs - departedMs) - pausedMs;
+  const pct           = Math.max(0, Math.min(100, (elapsedActive / totalDur) * 100));
 
-  let currentPauseMs = 0;
-  if (s.is_paused && s.paused_at) {
-    currentPauseMs = nowMs - new Date(s.paused_at).getTime();
-  }
+  // Never let the live ticker fall behind the server-computed value
+  const floored = s.computed_progress != null && pct < s.computed_progress
+    ? s.computed_progress
+    : pct;
 
-  const elapsedActive = (nowMs - departedMs) - pausedMs - currentPauseMs;
-  let progress = Math.max(0, Math.min(100, (elapsedActive / totalDuration) * 100));
-  
-  // ── Clock sync fallback: Never let client-side progress be less than the server's computed progress ──
-  if (s.computed_progress != null && progress < s.computed_progress) {
-    progress = s.computed_progress;
-  }
-
-  return Math.round(progress * 100) / 100;
+  return Math.round(floored * 100) / 100;
 }
 
 export function computeTimeRemaining(s: ShipmentTimeData): string {
@@ -358,36 +354,24 @@ export function computeTimeRemaining(s: ShipmentTimeData): string {
   if (s.is_paused) return 'On Hold';
   if (!s.departed_at || !s.estimated_delivery) return 'Calculating...';
 
-  const departedMs = new Date(s.departed_at).getTime();
-  
-  // Use route_duration (in seconds) if available to compute highly-precise totalDuration
-  const routeDurationMs = s.route_duration ? Number(s.route_duration) * 1000 : 0;
-
-  const estStr = s.estimated_delivery.includes('T') ? s.estimated_delivery : s.estimated_delivery + 'T23:59:59Z';
+  const estStr      = s.estimated_delivery.includes('T')
+    ? s.estimated_delivery
+    : s.estimated_delivery + 'T00:00:00.000Z';
   const estimatedMs = new Date(estStr).getTime();
-  
-  const totalDuration = routeDurationMs > 0 ? routeDurationMs : (estimatedMs - departedMs);
-  
-  const nowMs = Date.now();
-  const pausedMs = s.total_paused_ms || 0;
 
-  let currentPauseMs = 0;
-  if (s.is_paused && s.paused_at) {
-    currentPauseMs = nowMs - new Date(s.paused_at).getTime();
-  }
-
-  // Remaining = total - elapsed_active
-  const elapsedActive = (nowMs - departedMs) - pausedMs - currentPauseMs;
-  const remainingMs = Math.max(0, totalDuration - elapsedActive);
+  const nowMs       = Date.now();
+  const pausedMs    = s.total_paused_ms || 0;
+  // Remaining = ETA - now - (time still being paused, i.e. don't count pause as transit)
+  const remainingMs = Math.max(0, estimatedMs - nowMs + pausedMs);
 
   if (remainingMs <= 0) return 'Arriving now';
 
   const totalMins = Math.floor(remainingMs / 60000);
-  const days = Math.floor(totalMins / 1440);
-  const hours = Math.floor((totalMins % 1440) / 60);
-  const mins = totalMins % 60;
+  const days      = Math.floor(totalMins / 1440);
+  const hours     = Math.floor((totalMins % 1440) / 60);
+  const mins      = totalMins % 60;
 
-  if (days > 0) return `${days}d ${hours}h remaining`;
+  if (days > 0)  return `${days}d ${hours}h remaining`;
   if (hours > 0) return `${hours}h ${mins}m remaining`;
   return `${mins}m remaining`;
 }

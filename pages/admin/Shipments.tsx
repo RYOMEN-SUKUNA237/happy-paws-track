@@ -199,7 +199,9 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
         weight: form.weight ? `${form.weight} kg` : undefined,
         cargo_type: form.type,
         courier_id: form.courierId || undefined,
-        estimated_delivery: form.estimatedDelivery || undefined,
+        estimated_delivery: form.estimatedDelivery
+          ? new Date(form.estimatedDelivery).toISOString()
+          : undefined,
         route_data: routeData,
         transport_modes: transportModes,
         route_distance: routeDistance,
@@ -293,7 +295,16 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
       senderEmail: (shipment as any).senderEmail || '',
       receiverName: shipment.receiver || '',
       receiverEmail: (shipment as any).receiverEmail || '',
-      estimatedDelivery: shipment.estimatedDelivery || '',
+      // Convert ISO timestamp to datetime-local format (YYYY-MM-DDTHH:mm)
+      estimatedDelivery: shipment.estimatedDelivery
+        ? (() => {
+            const d = new Date(String(shipment.estimatedDelivery));
+            if (isNaN(d.getTime())) return shipment.estimatedDelivery || '';
+            // datetime-local needs local time format
+            const pad = (n: number) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+          })()
+        : '',
       description: (shipment as any).description || '',
       specialInstructions: (shipment as any).specialInstructions || '',
     });
@@ -309,7 +320,10 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
         sender_email: editForm.senderEmail || undefined,
         receiver_name: editForm.receiverName || undefined,
         receiver_email: editForm.receiverEmail || undefined,
-        estimated_delivery: editForm.estimatedDelivery || undefined,
+        // Convert datetime-local value (YYYY-MM-DDTHH:mm) to full ISO string
+        estimated_delivery: editForm.estimatedDelivery
+          ? new Date(editForm.estimatedDelivery).toISOString()
+          : undefined,
         description: editForm.description || undefined,
         special_instructions: editForm.specialInstructions || undefined,
       });
@@ -651,9 +665,10 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                       })}
 
                       <div>
-                        <label className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide">Override delivery date (optional)</label>
-                        <input type="date" value={form.estimatedDelivery} onChange={e => setForm(p => ({ ...p, estimatedDelivery: e.target.value }))}
+                        <label className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide">Override arrival date &amp; time (optional)</label>
+                        <input type="datetime-local" value={form.estimatedDelivery} onChange={e => setForm(p => ({ ...p, estimatedDelivery: e.target.value }))}
                           className="mt-1 w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:border-blue-500 outline-none" />
+                        <p className="text-[10px] text-gray-400 mt-0.5">Leave blank to use the route-calculated arrival time</p>
                       </div>
                     </div>
                   )}
@@ -700,6 +715,14 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                     style={{ width: `${selectedShipment.progress}%` }} />
                 </div>
                 <p className="text-xs text-gray-400 mt-1">{selectedShipment.progress}% complete {selectedShipment.isPaused && '(PAUSED)'}</p>
+                {selectedShipment.estimatedDelivery && (
+                  <p className="text-xs text-blue-600 font-medium mt-1">
+                    ⏱ Est. arrival: {(() => {
+                      const d = new Date(String(selectedShipment.estimatedDelivery));
+                      return isNaN(d.getTime()) ? selectedShipment.estimatedDelivery : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+                    })()}
+                  </p>
+                )}
               </div>
               <div className="flex gap-2 pt-2">
                 {selectedShipment.type === 'Live Animals' ? (
@@ -873,9 +896,10 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Estimated Delivery Date</label>
-                <input type="date" value={editForm.estimatedDelivery} onChange={e => setEditForm(p => ({ ...p, estimatedDelivery: e.target.value }))}
+                <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Estimated Arrival Date &amp; Time</label>
+                <input type="datetime-local" value={editForm.estimatedDelivery} onChange={e => setEditForm(p => ({ ...p, estimatedDelivery: e.target.value }))}
                   className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] outline-none" />
+                <p className="text-xs text-gray-400 mt-1">Setting this updates the ETA shown on all dashboards simultaneously.</p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Description</label>

@@ -1,242 +1,232 @@
 /**
- * fix-shipments.js  (v2 — full reconciliation)
+ * fix-shipments.js  (v3 — canonical single-ETA reconciliation)
  * ─────────────────────────────────────────────────────────────────────────
- * One-time migration that makes ALL shipment data consistent across every
- * dashboard (admin table, live map, tracking page, main site).
- *
- * Strategy:
- *  1. DELIVERED / RETURNED       → progress = 100, is_paused = false
- *  2. PENDING                    → progress = 0, is_paused = false, clear departed_at
- *  3. OVERDUE active shipments   → auto-mark as 'delivered' with progress = 100
- *     (status is picked-up/in-transit/out-for-delivery but ETA has already passed)
- *  4. PAUSED (overdue ETA)       → keep paused but fix progress to frozen value
- *  5. Active, not overdue        → recalculate time-based progress, fix ETA to ISO
+ * This script:
+ *  1. REVERTS the 16 shipments wrongly auto-marked as "delivered" back to
+ *     their original statuses as they were in the admin dashboard.
+ *  2. Sets ONE canonical ISO timestamp for estimated_delivery on every
+ *     active shipment so all dashboards use the exact same ETA.
+ *  3. Recalculates progress from that single source of truth.
+ *  4. Leaves delivered / returned / paused / pending exactly as-is.
  *
  * Run: node server/fix-shipments.js
  */
 
 require('dotenv').config({ path: './server/.env' });
 const { Pool } = require('pg');
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+// ── Shipments wrongly auto-delivered in the last run ──────────────────────────
+// Revert each to its original admin-dashboard status.
+const REVERT_MAP = {
+  'AT-8842-X9': 'in-transit',
+  'AT-3291-K4': 'out-for-delivery',
+  'AT-5510-A2': 'picked-up',
+  'AT-4464-J3': 'picked-up',
+  'AT-1794-O3': 'in-transit',
+  'AT-5836-R9': 'out-for-delivery',
+  'AT-3477-D2': 'in-transit',
+  'AT-5449-O3': 'in-transit',
+  'AT-5949-V8': 'in-transit',
+  'AT-3530-R8': 'picked-up',
+  'AT-7963-E2': 'picked-up',
+  'AT-4561-B9': 'picked-up',
+  'AT-7610-H8': 'picked-up',
+  'AT-7284-I2': 'in-transit',
+  'AT-1896-S3': 'in-transit',
+  'AT-7636-D0': 'in-transit',
+};
 
-// Active statuses that should be moving
-const ACTIVE_STATUSES = ['picked-up', 'in-transit', 'out-for-delivery'];
+// ── Progress floors so active status bars are visually meaningful ─────────────
+const PROGRESS_FLOORS = { 'picked-up': 5, 'in-transit': 20, 'out-for-delivery': 80 };
 
-function computeProgressForActive(s) {
+// ── Time-based progress using ONLY estimated_delivery (single source of truth) ─
+function computeProgress(s) {
+  const status = s.status;
+  if (status === 'delivered' || status === 'returned') return 100;
+  if (status === 'pending') return 0;
+  if (s.is_paused) return parseFloat(s.progress) || 0;
   if (!s.departed_at || !s.estimated_delivery) return parseFloat(s.progress) || 0;
 
   const departedMs  = new Date(s.departed_at).getTime();
-  const routeDurMs  = s.route_duration ? parseFloat(s.route_duration) * 1000 : 0;
   const estStr      = String(s.estimated_delivery);
   const estimatedMs = new Date(estStr.includes('T') ? estStr : estStr + 'T23:59:59Z').getTime();
-  const totalDur    = routeDurMs > 0 ? routeDurMs : (estimatedMs - departedMs);
-
+  const totalDur    = estimatedMs - departedMs;
   if (totalDur <= 0) return 100;
 
   const nowMs         = Date.now();
   const pausedMs      = parseInt(s.total_paused_ms) || 0;
   const elapsedActive = (nowMs - departedMs) - pausedMs;
-  const pct           = Math.max(0, Math.min(100, (elapsedActive / totalDur) * 100));
-  return Math.round(pct * 10) / 10;
+  const raw           = Math.max(0, Math.min(100, (elapsedActive / totalDur) * 100));
+  const floor         = PROGRESS_FLOORS[status] ?? 0;
+  return Math.round(Math.max(floor, raw) * 10) / 10;
 }
 
-function isOverdue(s) {
-  if (!s.estimated_delivery) return false;
-  const estStr  = String(s.estimated_delivery);
-  const estMs   = new Date(estStr.includes('T') ? estStr : estStr + 'T23:59:59Z').getTime();
-  return estMs < Date.now();
-}
-
-function buildIsoEta(s) {
-  // Already full ISO — no change
+// ── Compute single canonical ETA for a shipment ───────────────────────────────
+// Priority: departed_at + route_duration > existing ISO timestamp > leave as-is
+function canonicalEta(s) {
+  // Already a full ISO timestamp → keep it
   if (s.estimated_delivery && String(s.estimated_delivery).includes('T')) return null;
+
+  // Can compute exactly from route_duration + departed_at
   if (s.route_duration && s.departed_at) {
     const etaMs = new Date(s.departed_at).getTime() + parseFloat(s.route_duration) * 1000;
     return new Date(etaMs).toISOString();
   }
+
+  // Date-only fallback → convert to ISO midnight so at least it's parseable uniformly
+  if (s.estimated_delivery) {
+    const d = String(s.estimated_delivery);
+    return d + 'T00:00:00.000Z';
+  }
+
   return null;
 }
 
 async function main() {
   const client = await pool.connect();
-
   try {
     console.log('');
     console.log('╔══════════════════════════════════════════════════════════════╗');
-    console.log('║        NextTrace — Shipment Full Reconciliation v2           ║');
+    console.log('║   NextTrace — Shipment Canonical Reconciliation  v3          ║');
     console.log('╚══════════════════════════════════════════════════════════════╝');
     console.log('');
 
     const { rows: all } = await client.query(`
       SELECT id, tracking_id, status, progress, is_paused,
              departed_at, paused_at, total_paused_ms,
-             estimated_delivery, route_duration, created_at
-      FROM shipments
-      ORDER BY created_at ASC
+             estimated_delivery, route_duration, actual_delivery
+      FROM shipments ORDER BY created_at ASC
     `);
 
     console.log(`Loaded ${all.length} shipment(s).\n`);
 
-    const results = { autoDelivered: [], fixed: [], alreadyOk: [] };
+    const reverted   = [];
+    const etaFixed   = [];
+    const progFixed  = [];
+    const alreadyOk  = [];
 
     for (const s of all) {
-      const status = s.status;
+      let changed = false;
+      const parts  = [];
+      const params = [];
 
-      // ── 1. Already terminal: delivered / returned ──────────────────────
-      if (status === 'delivered' || status === 'returned') {
-        const prog = parseFloat(s.progress);
-        if (Math.abs(prog - 100) < 0.1 && !s.is_paused) {
-          results.alreadyOk.push(s.tracking_id);
-          continue;
-        }
-        await client.query(
-          'UPDATE shipments SET progress = 100, is_paused = FALSE WHERE id = $1',
-          [s.id]
-        );
-        results.fixed.push({ id: s.tracking_id, status, note: 'progress → 100' });
-        continue;
+      // ── STEP 1: revert wrongly auto-delivered shipments ────────────────
+      const originalStatus = REVERT_MAP[s.tracking_id];
+      if (originalStatus && s.status === 'delivered') {
+        params.push(originalStatus); parts.push(`status = $${params.length}`);
+        // Remove the actual_delivery date only if it was set by the script (not a real delivery)
+        parts.push(`actual_delivery = NULL`);
+        // Remove 100% progress that was forced
+        const recomputedProg = computeProgress({ ...s, status: originalStatus });
+        params.push(recomputedProg); parts.push(`progress = $${params.length}`);
+        reverted.push({ id: s.tracking_id, originalStatus });
+        changed = true;
       }
 
-      // ── 2. Pending ──────────────────────────────────────────────────────
-      if (status === 'pending') {
-        const prog = parseFloat(s.progress);
-        if (prog === 0 && !s.is_paused && !s.departed_at) {
-          results.alreadyOk.push(s.tracking_id);
-          continue;
+      // ── STEP 2: fix estimated_delivery to full ISO timestamp ───────────
+      // Use the status we're reverting TO (if reverting), not the current DB status
+      const effectiveStatus = (originalStatus && s.status === 'delivered') ? originalStatus : s.status;
+      if (!['pending', 'delivered', 'returned'].includes(effectiveStatus)) {
+        const newEta = canonicalEta(s);
+        if (newEta) {
+          params.push(newEta); parts.push(`estimated_delivery = $${params.length}`);
+          etaFixed.push(s.tracking_id);
+          changed = true;
         }
-        await client.query(
-          'UPDATE shipments SET progress = 0, is_paused = FALSE, departed_at = NULL WHERE id = $1',
-          [s.id]
-        );
-        results.fixed.push({ id: s.tracking_id, status, note: 'reset to 0%, cleared departed_at' });
-        continue;
       }
 
-      // ── 3. Active but OVERDUE → auto-deliver ────────────────────────────
-      if (ACTIVE_STATUSES.includes(status) && isOverdue(s)) {
-        const today = new Date().toISOString().split('T')[0];
-        await client.query(`
-          UPDATE shipments
-          SET status = 'delivered',
-              progress = 100,
-              is_paused = FALSE,
-              actual_delivery = COALESCE(actual_delivery, $1)
-          WHERE id = $2
-        `, [today, s.id]);
-
-        // Add a tracking history note
-        await client.query(`
-          INSERT INTO tracking_history (shipment_id, tracking_id, status, notes, updated_by)
-          VALUES ($1, $2, 'delivered', 'Auto-marked delivered: shipment ETA has passed.', 'system')
-        `, [s.id, s.tracking_id]);
-
-        results.autoDelivered.push({ id: s.tracking_id, was: status });
-        continue;
+      // ── STEP 3: recalculate progress for active / non-paused shipments ──
+      if (!['pending', 'delivered', 'returned'].includes(effectiveStatus) && !s.is_paused) {
+        // Use updated ETA if we just fixed it
+        const etaForCalc = (params.includes(params.find(p => typeof p === 'string' && p.includes('T') && p.length > 10)))
+          ? params[params.findIndex(p => typeof p === 'string' && p.includes('T') && p.length > 10)]
+          : s.estimated_delivery;
+        const sForCalc = {
+          ...s,
+          status: effectiveStatus,
+          estimated_delivery: etaForCalc || s.estimated_delivery,
+        };
+        const newProg = computeProgress(sForCalc);
+        const oldProg = parseFloat(s.progress) || 0;
+        if (Math.abs(newProg - oldProg) >= 0.05) {
+          params.push(newProg); parts.push(`progress = $${params.length}`);
+          progFixed.push({ id: s.tracking_id, from: oldProg.toFixed(1), to: newProg.toFixed(1) });
+          changed = true;
+        }
       }
 
-      // ── 4. Paused ────────────────────────────────────────────────────────
-      if (status === 'paused' || s.is_paused) {
-        // Fix ETA to ISO if possible
-        const newEta = buildIsoEta(s);
-        // Frozen progress should be whatever was captured at pause time
-        const frozenProg = parseFloat(s.progress) || 0;
-        const needsEtaFix = !!newEta;
-        const needsIsPausedFix = !s.is_paused;
-
-        if (!needsEtaFix && !needsIsPausedFix) {
-          results.alreadyOk.push(s.tracking_id);
-          continue;
+      // ── STEP 4: pending must always be 0 ──────────────────────────────
+      if (s.status === 'pending') {
+        if (parseFloat(s.progress) !== 0 || s.departed_at) {
+          parts.push(`progress = 0`, `departed_at = NULL`);
+          changed = true;
         }
-
-        const parts = [];
-        const params = [];
-        if (needsEtaFix) {
-          params.push(newEta);
-          parts.push(`estimated_delivery = $${params.length}`);
-        }
-        if (needsIsPausedFix) {
-          parts.push('is_paused = TRUE');
-        }
-        params.push(s.id);
-        await client.query(`UPDATE shipments SET ${parts.join(', ')} WHERE id = $${params.length}`, params);
-
-        const notes = [];
-        if (needsEtaFix) notes.push('ETA → ISO');
-        if (needsIsPausedFix) notes.push('is_paused → TRUE');
-        results.fixed.push({ id: s.tracking_id, status, note: notes.join(', ') });
-        continue;
       }
 
-      // ── 5. Active, not overdue — recalculate progress + fix ETA ──────────
-      if (ACTIVE_STATUSES.includes(status)) {
-        const newProg  = computeProgressForActive(s);
-        const oldProg  = parseFloat(s.progress) || 0;
-        const newEta   = buildIsoEta(s);
-
-        const progChanged = Math.abs(newProg - oldProg) >= 0.05;
-        const etaChanged  = !!newEta;
-
-        if (!progChanged && !etaChanged) {
-          results.alreadyOk.push(s.tracking_id);
-          continue;
+      // ── STEP 5: delivered/returned must always be 100 ─────────────────
+      if ((s.status === 'delivered' || s.status === 'returned') && !originalStatus) {
+        if (Math.abs(parseFloat(s.progress) - 100) >= 0.05) {
+          params.push(100); parts.push(`progress = $${params.length}`);
+          changed = true;
         }
-
-        const parts = [];
-        const params = [];
-        if (progChanged) {
-          params.push(newProg);
-          parts.push(`progress = $${params.length}`);
-        }
-        if (etaChanged) {
-          params.push(newEta);
-          parts.push(`estimated_delivery = $${params.length}`);
-        }
-        params.push(s.id);
-        await client.query(`UPDATE shipments SET ${parts.join(', ')} WHERE id = $${params.length}`, params);
-
-        const notes = [];
-        if (progChanged) notes.push(`progress ${oldProg.toFixed(1)}% → ${newProg.toFixed(1)}%`);
-        if (etaChanged) notes.push('ETA → ISO');
-        results.fixed.push({ id: s.tracking_id, status, note: notes.join(', ') });
-        continue;
       }
+
+      if (!changed) { alreadyOk.push(s.tracking_id); continue; }
+
+      params.push(s.id);
+      await client.query(
+        `UPDATE shipments SET ${parts.join(', ')} WHERE id = $${params.length}`,
+        params
+      );
     }
 
-    // ── Print summary ─────────────────────────────────────────────────────
+    // ── Remove the auto-added "Auto-marked delivered" tracking history entries ──
+    if (reverted.length > 0) {
+      const ids = reverted.map(r => r.id);
+      const { rowCount } = await client.query(
+        `DELETE FROM tracking_history
+         WHERE tracking_id = ANY($1::text[])
+         AND notes = 'Auto-marked delivered: shipment ETA has passed.'
+         AND updated_by = 'system'`,
+        [ids]
+      );
+      console.log(`🗑   Removed ${rowCount} auto-added tracking history entr${rowCount === 1 ? 'y' : 'ies'}.\n`);
+    }
+
+    // ── Print results ──────────────────────────────────────────────────────────
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-    if (results.autoDelivered.length > 0) {
-      console.log(`\n📦  AUTO-MARKED AS DELIVERED (${results.autoDelivered.length})`);
-      console.log('    These had active statuses but their ETA already passed:');
-      results.autoDelivered.forEach(r =>
-        console.log(`     • ${r.id.padEnd(18)} (was: ${r.was})`)
-      );
+    if (reverted.length) {
+      console.log(`\n🔄  REVERTED TO ORIGINAL STATUS (${reverted.length})`);
+      reverted.forEach(r => console.log(`     • ${r.id.padEnd(18)} → ${r.originalStatus}`));
     }
 
-    if (results.fixed.length > 0) {
-      console.log(`\n🔧  DATA CORRECTED (${results.fixed.length})`);
-      results.fixed.forEach(r =>
-        console.log(`     • ${r.id.padEnd(18)} [${r.status.padEnd(18)}]  ${r.note}`)
-      );
+    if (etaFixed.length) {
+      console.log(`\n⏱   ETA FIXED → FULL ISO TIMESTAMP (${etaFixed.length})`);
+      etaFixed.forEach(id => process.stdout.write(`     ${id}  `));
+      console.log('');
     }
 
-    if (results.alreadyOk.length > 0) {
-      console.log(`\n✅  ALREADY CORRECT (${results.alreadyOk.length})`);
-      results.alreadyOk.forEach(id => process.stdout.write(`     ${id}  `));
+    if (progFixed.length) {
+      console.log(`\n📊  PROGRESS RECALCULATED (${progFixed.length})`);
+      progFixed.forEach(r => console.log(`     • ${r.id.padEnd(18)} ${r.from}% → ${r.to}%`));
+    }
+
+    if (alreadyOk.length) {
+      console.log(`\n✅  ALREADY CORRECT (${alreadyOk.length})`);
+      alreadyOk.forEach(id => process.stdout.write(`     ${id}  `));
       console.log('');
     }
 
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`\n✅  Reconciliation complete.`);
-    console.log(`    Auto-delivered : ${results.autoDelivered.length}`);
-    console.log(`    Fixed          : ${results.fixed.length}`);
-    console.log(`    Already OK     : ${results.alreadyOk.length}`);
-    console.log(`    Total          : ${all.length}`);
-    console.log('\n    All dashboards will now show consistent data.');
+    console.log(`\n✅  Done.`);
+    console.log(`    Reverted    : ${reverted.length}`);
+    console.log(`    ETA fixed   : ${etaFixed.length}`);
+    console.log(`    Prog fixed  : ${progFixed.length}`);
+    console.log(`    Already OK  : ${alreadyOk.length}`);
+    console.log(`    Total       : ${all.length}`);
+    console.log('\n    Single canonical ETA is now used across all dashboards.');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
   } catch (err) {

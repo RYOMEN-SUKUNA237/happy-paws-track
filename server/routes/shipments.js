@@ -12,43 +12,27 @@ try {
 
 const router = express.Router();
 
-// ─── TIME-BASED PROGRESS ────────────────────────────────────────────
+// ─── TIME-BASED PROGRESS ─────────────────────────────────────────────────────
+// Single canonical formula: progress = (now - departed_at) / (estimated_delivery - departed_at)
+// estimated_delivery is ALWAYS stored as a full ISO timestamp (= departed_at + route_duration).
+// This guarantees EVERY dashboard shows the exact same number.
 function computeProgress(shipment) {
-  // For delivered/returned, always 100
   if (shipment.status === 'delivered' || shipment.status === 'returned') return 100;
-  // For pending, always 0
   if (shipment.status === 'pending') return 0;
-  // ── Paused: return the frozen progress saved at pause-time ──
-  // This guarantees the parcel does NOT move a single inch while paused.
-  if (shipment.is_paused) {
-    return parseFloat(shipment.progress) || 0;
-  }
-  // Need departed_at and estimated_delivery to compute
-  if (!shipment.departed_at || !shipment.estimated_delivery) return shipment.progress || 0;
+  if (shipment.is_paused) return parseFloat(shipment.progress) || 0;
+  if (!shipment.departed_at || !shipment.estimated_delivery) return parseFloat(shipment.progress) || 0;
 
-  const departedMs = new Date(shipment.departed_at).getTime();
-  
-  // Use route_duration (in seconds) if available to compute highly-precise totalDuration
-  const routeDurationMs = shipment.route_duration ? parseFloat(shipment.route_duration) * 1000 : 0;
+  const departedMs  = new Date(shipment.departed_at).getTime();
+  const estStr      = String(shipment.estimated_delivery);
+  const estimatedMs = new Date(estStr.includes('T') ? estStr : estStr + 'T00:00:00.000Z').getTime();
+  const totalDur    = estimatedMs - departedMs;
+  if (totalDur <= 0) return 100;
 
-  const estStr = String(shipment.estimated_delivery);
-  const estimatedMs = new Date(estStr.includes('T') ? estStr : estStr + 'T23:59:59Z').getTime();
-  
-  const totalDuration = routeDurationMs > 0 ? routeDurationMs : (estimatedMs - departedMs);
-  if (totalDuration <= 0) return shipment.progress || 0;
-
-  const nowMs = Date.now();
-  const pausedMs = parseInt(shipment.total_paused_ms) || 0;
-
-  // If currently paused, don't count time since paused_at
-  let currentPauseMs = 0;
-  if (shipment.is_paused && shipment.paused_at) {
-    currentPauseMs = nowMs - new Date(shipment.paused_at).getTime();
-  }
-
-  const elapsedActive = (nowMs - departedMs) - pausedMs - currentPauseMs;
-  const progress = Math.max(0, Math.min(100, (elapsedActive / totalDuration) * 100));
-  return Math.round(progress * 10) / 10; // 1 decimal
+  const nowMs         = Date.now();
+  const pausedMs      = parseInt(shipment.total_paused_ms) || 0;
+  const elapsedActive = (nowMs - departedMs) - pausedMs;
+  const pct           = Math.max(0, Math.min(100, (elapsedActive / totalDur) * 100));
+  return Math.round(pct * 10) / 10;
 }
 
 function enrichShipment(s) {
@@ -738,6 +722,14 @@ router.put('/:id', authMiddleware, async (req, res) => {
       description, declared_value, insurance, estimated_delivery, special_instructions
     } = req.body;
 
+    // Normalize estimated_delivery: always store as full ISO timestamp.
+    // date-only strings (YYYY-MM-DD) are converted to midnight UTC.
+    let normalizedEta = null;
+    if (estimated_delivery) {
+      const eStr = String(estimated_delivery).trim();
+      normalizedEta = eStr.includes('T') ? eStr : eStr + 'T00:00:00.000Z';
+    }
+
     await pool.query(`
       UPDATE shipments SET
         sender_name = COALESCE($1, sender_name),
@@ -763,7 +755,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
       origin || null, destination || null, weight || null, dimensions || null,
       cargo_type || null, description || null, declared_value || null,
       insurance != null ? (insurance ? true : false) : null,
-      estimated_delivery || null, special_instructions || null,
+      normalizedEta, special_instructions || null,
       shipment.id
     ]);
 

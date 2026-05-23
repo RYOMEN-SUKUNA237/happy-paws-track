@@ -84,8 +84,10 @@ export function haversineKm(a: [number, number], b: [number, number]): number {
 }
 
 function hoursToDeliveryDate(hours: number): string {
+  // Return a FULL ISO timestamp (not date-only) so the exact ETA is preserved
+  // everywhere — admin dashboard, tracking page, live map all read this same value.
   const ms = hours * 3600 * 1000;
-  return new Date(Date.now() + ms).toISOString().split('T')[0];
+  return new Date(Date.now() + ms).toISOString();
 }
 
 export function formatPlanDuration(hours: number): string {
