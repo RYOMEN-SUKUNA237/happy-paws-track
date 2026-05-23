@@ -318,6 +318,11 @@ export function computeTimeBasedProgress(s: ShipmentTimeData): number {
   }
   if (s.status === 'delivered' || s.status === 'returned') return 100;
   if (s.status === 'pending') return 0;
+  // ── Paused: return the frozen progress saved at pause-time ──
+  // This guarantees zero drift — the parcel stays exactly where it was paused.
+  if (s.is_paused) {
+    return s.computed_progress ?? s.progress ?? 0;
+  }
   if (!s.departed_at || !s.estimated_delivery) return s.computed_progress ?? s.progress ?? 0;
 
   const departedMs = new Date(s.departed_at).getTime();
@@ -343,6 +348,7 @@ export function computeTimeBasedProgress(s: ShipmentTimeData): number {
 export function computeTimeRemaining(s: ShipmentTimeData): string {
   if (s.status === 'delivered' || s.status === 'returned') return 'Delivered';
   if (s.status === 'pending') return 'Awaiting pickup';
+  if (s.is_paused) return 'On Hold';
   if (!s.departed_at || !s.estimated_delivery) return 'Calculating...';
 
   const estStr = s.estimated_delivery.includes('T') ? s.estimated_delivery : s.estimated_delivery + 'T23:59:59Z';

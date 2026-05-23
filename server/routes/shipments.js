@@ -18,6 +18,11 @@ function computeProgress(shipment) {
   if (shipment.status === 'delivered' || shipment.status === 'returned') return 100;
   // For pending, always 0
   if (shipment.status === 'pending') return 0;
+  // ── Paused: return the frozen progress saved at pause-time ──
+  // This guarantees the parcel does NOT move a single inch while paused.
+  if (shipment.is_paused) {
+    return parseFloat(shipment.progress) || 0;
+  }
   // Need departed_at and estimated_delivery to compute
   if (!shipment.departed_at || !shipment.estimated_delivery) return shipment.progress || 0;
 
@@ -345,9 +350,15 @@ router.patch('/:id/status', authMiddleware, async (req, res) => {
     }
     // ────────────────────────────────────────────────────────────────
 
-    // Keep progress frozen at current value when pausing
-    const progressMap = { 'pending': 0, 'picked-up': 15, 'in-transit': 50, 'out-for-delivery': 85, 'delivered': 100, 'returned': 100, 'paused': shipment.progress };
-    const progress = progressMap[status] ?? shipment.progress;
+    // ── Compute progress: when PAUSING, snapshot the live value at this instant ──
+    let progress;
+    if (nowBecomingPaused && !wasPaused) {
+      // Compute the current real-time progress right now and freeze it in the DB
+      progress = computeProgress(shipment); // shipment still has is_paused=false here
+    } else {
+      const progressMap = { 'pending': 0, 'picked-up': 15, 'in-transit': 50, 'out-for-delivery': 85, 'delivered': 100, 'returned': 100, 'paused': shipment.progress };
+      progress = progressMap[status] ?? shipment.progress;
+    }
     const actualDelivery = status === 'delivered' ? new Date().toISOString().split('T')[0] : null;
 
     // Set departed_at when shipment first starts moving
@@ -548,10 +559,11 @@ router.patch('/:id/pause', authMiddleware, async (req, res) => {
 
     const nowIso = new Date().toISOString();
     if (newPaused) {
-      // Pausing: record paused_at + reason
+      // Pausing: snapshot the live progress at this instant + record paused_at + reason
+      const frozenProgress = computeProgress(shipment); // shipment still has is_paused=false here
       await pool.query(`UPDATE shipments SET is_paused = TRUE, status = $1, paused_at = $2,
-        pause_category = $3, pause_reason = $4 WHERE id = $5`,
-        [newStatus, nowIso, pause_category || null, pause_reason || null, shipment.id]);
+        pause_category = $3, pause_reason = $4, progress = $5 WHERE id = $6`,
+        [newStatus, nowIso, pause_category || null, pause_reason || null, frozenProgress, shipment.id]);
     } else {
       // Resuming: accumulate paused duration, clear reason, extend estimated_delivery
       let accumulatedMs = parseInt(shipment.total_paused_ms) || 0;
