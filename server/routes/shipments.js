@@ -26,7 +26,10 @@ function computeProgress(shipment) {
   const estStr      = String(shipment.estimated_delivery);
   const estimatedMs = new Date(estStr.includes('T') ? estStr : estStr + 'T00:00:00.000Z').getTime();
   const totalPausedMs = parseInt(shipment.total_paused_ms) || 0;
-  const totalDur    = estimatedMs - departedMs - totalPausedMs;
+  let totalDur    = estimatedMs - departedMs - totalPausedMs;
+  if (totalDur <= 0 && shipment.route_duration) {
+    totalDur = parseFloat(shipment.route_duration) * 1000;
+  }
   if (totalDur <= 0) return 100;
 
   const nowMs         = Date.now();
@@ -733,7 +736,10 @@ router.patch('/:id/alter-location', authMiddleware, async (req, res) => {
         : String(shipment.estimated_delivery) + 'T00:00:00.000Z';
       const estimatedMs = new Date(estStr).getTime();
       const totalPausedMs = parseInt(shipment.total_paused_ms) || 0;
-      const D_transit = estimatedMs - departedMs - totalPausedMs;
+      let D_transit = estimatedMs - departedMs - totalPausedMs;
+      if (D_transit <= 0 && shipment.route_duration) {
+        D_transit = parseFloat(shipment.route_duration) * 1000;
+      }
 
       if (D_transit > 0) {
         const anchorMs = shipment.is_paused && shipment.paused_at

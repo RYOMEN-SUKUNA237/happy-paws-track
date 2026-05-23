@@ -333,7 +333,10 @@ export function computeTimeBasedProgress(s: ShipmentTimeData): number {
     : s.estimated_delivery + 'T00:00:00.000Z';
   const estimatedMs = new Date(estStr).getTime();
   const totalPausedMs = Number(s.total_paused_ms) || 0;
-  const totalDur    = estimatedMs - departedMs - totalPausedMs;
+  let totalDur    = estimatedMs - departedMs - totalPausedMs;
+  if (totalDur <= 0 && s.route_duration) {
+    totalDur = Number(s.route_duration) * 1000;
+  }
   if (totalDur <= 0) return 100;
 
   const nowMs         = Date.now();
