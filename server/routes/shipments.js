@@ -27,9 +27,14 @@ function computeProgress(shipment) {
   if (!shipment.departed_at || !shipment.estimated_delivery) return shipment.progress || 0;
 
   const departedMs = new Date(shipment.departed_at).getTime();
+  
+  // Use route_duration (in seconds) if available to compute highly-precise totalDuration
+  const routeDurationMs = shipment.route_duration ? parseFloat(shipment.route_duration) * 1000 : 0;
+
   const estStr = String(shipment.estimated_delivery);
   const estimatedMs = new Date(estStr.includes('T') ? estStr : estStr + 'T23:59:59Z').getTime();
-  const totalDuration = estimatedMs - departedMs;
+  
+  const totalDuration = routeDurationMs > 0 ? routeDurationMs : (estimatedMs - departedMs);
   if (totalDuration <= 0) return shipment.progress || 0;
 
   const nowMs = Date.now();
@@ -170,6 +175,22 @@ router.get('/:id', authMiddleware, async (req, res) => {
     const shipment = rows[0];
     if (!shipment) return res.status(404).json({ error: 'Shipment not found.' });
 
+    // Parse JSON fields
+    if (shipment.route_data && typeof shipment.route_data === 'string') {
+      try { shipment.route_data = JSON.parse(shipment.route_data); } catch (e) {}
+    }
+    if (shipment.transport_modes && typeof shipment.transport_modes === 'string') {
+      try { shipment.transport_modes = JSON.parse(shipment.transport_modes); } catch (e) {}
+    }
+    if (shipment.multi_modal_segments && typeof shipment.multi_modal_segments === 'string') {
+      try { shipment.multi_modal_segments = JSON.parse(shipment.multi_modal_segments); } catch (e) {}
+    }
+    if (shipment.multi_modal_stops && typeof shipment.multi_modal_stops === 'string') {
+      try { shipment.multi_modal_stops = JSON.parse(shipment.multi_modal_stops); } catch (e) {}
+    }
+
+    enrichShipment(shipment);
+
     const { rows: history } = await pool.query('SELECT * FROM tracking_history WHERE shipment_id = $1 ORDER BY created_at DESC', [shipment.id]);
 
     let courier = null;
@@ -219,8 +240,29 @@ router.post('/', authMiddleware, async (req, res) => {
     } while (attempts < 10);
 
     const initialStatus = courier_id ? 'picked-up' : 'pending';
-    const estDelivery = estimated_delivery || new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0];
     const departedAt = courier_id ? new Date().toISOString() : null;
+
+    // If we have a precise route_duration (seconds from Mapbox), compute estimated_delivery
+    // as an exact ISO timestamp: departed_at + route_duration.
+    // This ensures ETA shown on creation ("6h 54m") matches every dashboard that reads
+    // route_duration vs estimated_delivery — they all point to the same moment.
+    let estDelivery;
+    if (estimated_delivery) {
+      // Admin provided an explicit date; keep it but if route_duration exists, convert to ISO
+      if (route_duration && departedAt) {
+        const etaMs = new Date(departedAt).getTime() + parseFloat(route_duration) * 1000;
+        estDelivery = new Date(etaMs).toISOString();
+      } else {
+        estDelivery = estimated_delivery;
+      }
+    } else if (route_duration && departedAt) {
+      // No explicit date given — derive it precisely from route_duration
+      const etaMs = new Date(departedAt).getTime() + parseFloat(route_duration) * 1000;
+      estDelivery = new Date(etaMs).toISOString();
+    } else {
+      // Absolute fallback: 5 days from now (date only)
+      estDelivery = new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0];
+    }
 
     const { rows: inserted } = await pool.query(`
       INSERT INTO shipments (
@@ -251,6 +293,7 @@ router.post('/', authMiddleware, async (req, res) => {
     ]);
 
     const shipment = inserted[0];
+    enrichShipment(shipment); // add computed_progress to creation response
 
     // Add tracking history entry
     await pool.query(
@@ -340,24 +383,43 @@ router.patch('/:id/status', authMiddleware, async (req, res) => {
       isPaused = false;
 
       // Extend estimated_delivery by the pause duration
+      // Keep as full ISO timestamp to preserve ETA precision.
       if (newEstimatedDelivery && pauseDurationMs > 0) {
-        const estStr = newEstimatedDelivery.includes('T')
-          ? newEstimatedDelivery
-          : newEstimatedDelivery + 'T23:59:59Z';
+        const estStr = String(newEstimatedDelivery).includes('T')
+          ? String(newEstimatedDelivery)
+          : String(newEstimatedDelivery) + 'T23:59:59Z';
         const newEstMs = new Date(estStr).getTime() + pauseDurationMs;
-        newEstimatedDelivery = new Date(newEstMs).toISOString().split('T')[0];
+        newEstimatedDelivery = new Date(newEstMs).toISOString(); // Keep full ISO timestamp
       }
     }
     // ────────────────────────────────────────────────────────────────
 
-    // ── Compute progress: when PAUSING, snapshot the live value at this instant ──
+    // ── Compute progress ──────────────────────────────────────────────
+    // When PAUSING: snapshot the live time-based value so the bar freezes.
+    // When DELIVERED/RETURNED: always 100.
+    // When PENDING: always 0.
+    // ALL OTHER transitions: recompute from time (never hardcode 15/50/85).
+    // This guarantees ALL dashboards see the same value.
     let progress;
     if (nowBecomingPaused && !wasPaused) {
-      // Compute the current real-time progress right now and freeze it in the DB
-      progress = computeProgress(shipment); // shipment still has is_paused=false here
+      // Freeze current time-based progress into DB (shipment still has is_paused=false)
+      progress = computeProgress(shipment);
+    } else if (status === 'delivered' || status === 'returned') {
+      progress = 100;
+    } else if (status === 'pending') {
+      progress = 0;
     } else {
-      const progressMap = { 'pending': 0, 'picked-up': 15, 'in-transit': 50, 'out-for-delivery': 85, 'delivered': 100, 'returned': 100, 'paused': shipment.progress };
-      progress = progressMap[status] ?? shipment.progress;
+      // Use time-based calculation — keeps admin table + tracking page in sync
+      // If departed_at isn't set yet (first transition out of pending), mock it as now
+      const mockForProgress = { ...shipment, is_paused: false };
+      if (!mockForProgress.departed_at && ['picked-up', 'in-transit', 'out-for-delivery'].includes(status)) {
+        mockForProgress.departed_at = nowIso;
+      }
+      const computed = computeProgress(mockForProgress);
+      // Clamp to a minimum floor so status transitions are visually meaningful
+      const floors = { 'picked-up': 2, 'in-transit': 5, 'out-for-delivery': 80 };
+      const floor = floors[status] ?? 0;
+      progress = Math.max(floor, computed);
     }
     const actualDelivery = status === 'delivered' ? new Date().toISOString().split('T')[0] : null;
 
@@ -497,7 +559,7 @@ router.patch('/:id/status', authMiddleware, async (req, res) => {
       }
     }
 
-    res.json({ shipment: updated[0] });
+    res.json({ shipment: enrichShipment(updated[0]) });
   } catch (err) {
     console.error('Update shipment status error:', err);
     res.status(500).json({ error: 'Internal server error.' });
@@ -531,7 +593,7 @@ router.patch('/:id/assign', authMiddleware, async (req, res) => {
     );
 
     const { rows: updated } = await pool.query('SELECT * FROM shipments WHERE id = $1', [shipment.id]);
-    res.json({ shipment: updated[0] });
+    res.json({ shipment: enrichShipment(updated[0]) });
   } catch (err) {
     console.error('Assign courier error:', err);
     res.status(500).json({ error: 'Internal server error.' });
@@ -574,13 +636,14 @@ router.patch('/:id/pause', authMiddleware, async (req, res) => {
       }
 
       // Recalculate estimated delivery — extend it by the exact pause duration
+      // Keep as full ISO timestamp to preserve ETA precision.
       let newEstDelivery = shipment.estimated_delivery || null;
       if (newEstDelivery && pauseDurationMs > 0) {
-        const estStr = newEstDelivery.includes('T')
-          ? newEstDelivery
-          : newEstDelivery + 'T23:59:59Z';
+        const estStr = String(newEstDelivery).includes('T')
+          ? String(newEstDelivery)
+          : String(newEstDelivery) + 'T23:59:59Z';
         const newEstMs = new Date(estStr).getTime() + pauseDurationMs;
-        newEstDelivery = new Date(newEstMs).toISOString().split('T')[0];
+        newEstDelivery = new Date(newEstMs).toISOString(); // Keep full ISO timestamp
       }
 
       await pool.query(`UPDATE shipments SET is_paused = FALSE, status = $1, paused_at = NULL, total_paused_ms = $2,
@@ -654,7 +717,7 @@ router.patch('/:id/pause', authMiddleware, async (req, res) => {
       }
     }
 
-    res.json({ shipment: updated[0] });
+    res.json({ shipment: enrichShipment(updated[0]) });
   } catch (err) {
     console.error('Pause/Resume error:', err);
     res.status(500).json({ error: 'Internal server error.' });
@@ -705,7 +768,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
     ]);
 
     const { rows: updated } = await pool.query('SELECT * FROM shipments WHERE id = $1', [shipment.id]);
-    res.json({ shipment: updated[0] });
+    res.json({ shipment: enrichShipment(updated[0]) });
   } catch (err) {
     console.error('Update shipment error:', err);
     res.status(500).json({ error: 'Internal server error.' });

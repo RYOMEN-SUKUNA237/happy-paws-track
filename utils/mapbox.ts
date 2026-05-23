@@ -304,6 +304,7 @@ export interface ShipmentTimeData {
   status: string;
   departed_at?: string | null;
   estimated_delivery?: string | null;
+  route_duration?: number | string | null; // route duration in SECONDS (from Mapbox)
   is_paused?: number | boolean;
   paused_at?: string | null;
   total_paused_ms?: number;
@@ -312,10 +313,6 @@ export interface ShipmentTimeData {
 }
 
 export function computeTimeBasedProgress(s: ShipmentTimeData): number {
-  // Use server-computed progress if available
-  if (s.computed_progress != null) {
-    // Re-compute client-side for real-time smoothness
-  }
   if (s.status === 'delivered' || s.status === 'returned') return 100;
   if (s.status === 'pending') return 0;
   // ── Paused: return the frozen progress saved at pause-time ──
@@ -326,10 +323,14 @@ export function computeTimeBasedProgress(s: ShipmentTimeData): number {
   if (!s.departed_at || !s.estimated_delivery) return s.computed_progress ?? s.progress ?? 0;
 
   const departedMs = new Date(s.departed_at).getTime();
-  // Estimated delivery is a date string (YYYY-MM-DD), treat as end of day UTC
+  
+  // Use route_duration (in seconds) if available to compute highly-precise totalDuration
+  const routeDurationMs = s.route_duration ? Number(s.route_duration) * 1000 : 0;
+  
   const estStr = s.estimated_delivery.includes('T') ? s.estimated_delivery : s.estimated_delivery + 'T23:59:59Z';
   const estimatedMs = new Date(estStr).getTime();
-  const totalDuration = estimatedMs - departedMs;
+  
+  const totalDuration = routeDurationMs > 0 ? routeDurationMs : (estimatedMs - departedMs);
   if (totalDuration <= 0) return s.computed_progress ?? s.progress ?? 0;
 
   const nowMs = Date.now();
@@ -341,7 +342,13 @@ export function computeTimeBasedProgress(s: ShipmentTimeData): number {
   }
 
   const elapsedActive = (nowMs - departedMs) - pausedMs - currentPauseMs;
-  const progress = Math.max(0, Math.min(100, (elapsedActive / totalDuration) * 100));
+  let progress = Math.max(0, Math.min(100, (elapsedActive / totalDuration) * 100));
+  
+  // ── Clock sync fallback: Never let client-side progress be less than the server's computed progress ──
+  if (s.computed_progress != null && progress < s.computed_progress) {
+    progress = s.computed_progress;
+  }
+
   return Math.round(progress * 100) / 100;
 }
 
@@ -351,8 +358,16 @@ export function computeTimeRemaining(s: ShipmentTimeData): string {
   if (s.is_paused) return 'On Hold';
   if (!s.departed_at || !s.estimated_delivery) return 'Calculating...';
 
+  const departedMs = new Date(s.departed_at).getTime();
+  
+  // Use route_duration (in seconds) if available to compute highly-precise totalDuration
+  const routeDurationMs = s.route_duration ? Number(s.route_duration) * 1000 : 0;
+
   const estStr = s.estimated_delivery.includes('T') ? s.estimated_delivery : s.estimated_delivery + 'T23:59:59Z';
   const estimatedMs = new Date(estStr).getTime();
+  
+  const totalDuration = routeDurationMs > 0 ? routeDurationMs : (estimatedMs - departedMs);
+  
   const nowMs = Date.now();
   const pausedMs = s.total_paused_ms || 0;
 
@@ -362,8 +377,6 @@ export function computeTimeRemaining(s: ShipmentTimeData): string {
   }
 
   // Remaining = total - elapsed_active
-  const departedMs = new Date(s.departed_at).getTime();
-  const totalDuration = estimatedMs - departedMs;
   const elapsedActive = (nowMs - departedMs) - pausedMs - currentPauseMs;
   const remainingMs = Math.max(0, totalDuration - elapsedActive);
 

@@ -223,7 +223,16 @@ const TrackingDashboard: React.FC = () => {
   const shipment = data?.shipment;
   const history = data?.history || [];
   const courier = data?.courier;
-  const currentStatusIdx = shipment ? statusOrder.indexOf(shipment.status) : -1;
+  
+  let currentStatusIdx = shipment ? statusOrder.indexOf(shipment.status) : -1;
+  if (shipment && shipment.status === 'paused') {
+    const prog = liveProgress;
+    if (prog >= 100) currentStatusIdx = 4; // delivered
+    else if (prog >= 85) currentStatusIdx = 3; // out-for-delivery
+    else if (prog >= 15) currentStatusIdx = 2; // in-transit
+    else if (prog > 0) currentStatusIdx = 1; // picked-up
+    else currentStatusIdx = 0; // pending
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
