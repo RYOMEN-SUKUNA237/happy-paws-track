@@ -523,6 +523,71 @@ export function interpolateMultiModal(
   };
 }
 
+export interface TransitThreshold {
+  stopIndex: number;
+  progressPercent: number;
+  name: string;
+  coords: [number, number];
+}
+
+export function computeTransitStopThresholds(
+  segments: RouteSegment[],
+  transitStops: TransitStop[]
+): TransitThreshold[] {
+  if (!segments || segments.length === 0 || !transitStops || transitStops.length === 0) {
+    return [];
+  }
+
+  interface TimeSlice {
+    type: 'segment' | 'transit';
+    index: number;       // index into segments or transitStops
+    durationHours: number;
+    startFraction: number;
+    endFraction: number;
+  }
+
+  const slices: TimeSlice[] = [];
+  let totalH = 0;
+
+  for (let i = 0; i < segments.length; i++) {
+    slices.push({ type: 'segment', index: i, durationHours: segments[i].durationHours, startFraction: 0, endFraction: 0 });
+    totalH += segments[i].durationHours;
+
+    // Add transit stop after this segment if one exists at the segment's destination
+    const stop = transitStops.find(ts =>
+      Math.abs(ts.coords[0] - segments[i].to.coords[0]) < 0.1 &&
+      Math.abs(ts.coords[1] - segments[i].to.coords[1]) < 0.1
+    );
+    if (stop) {
+      slices.push({ type: 'transit', index: transitStops.indexOf(stop), durationHours: stop.waitHours, startFraction: 0, endFraction: 0 });
+      totalH += stop.waitHours;
+    }
+  }
+
+  // Calculate fraction ranges
+  let cursor = 0;
+  for (const slice of slices) {
+    slice.startFraction = cursor / totalH;
+    cursor += slice.durationHours;
+    slice.endFraction = cursor / totalH;
+  }
+
+  const thresholds: TransitThreshold[] = [];
+  for (const slice of slices) {
+    if (slice.type === 'transit') {
+      const stop = transitStops[slice.index];
+      thresholds.push({
+        stopIndex: slice.index,
+        progressPercent: Math.round(slice.startFraction * 10000) / 100, // round to 2 decimal places e.g. 45.32
+        name: stop.name,
+        coords: stop.coords
+      });
+    }
+  }
+
+  return thresholds;
+}
+
 // ─── WEATHER (Open-Meteo — free, no API key) ────────────────────────
 
 export interface WeatherData {

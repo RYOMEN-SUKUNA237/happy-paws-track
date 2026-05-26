@@ -114,7 +114,8 @@ router.get('/:id/track', async (req, res) => {
               cargo_type, weight, route_data, transport_modes, route_distance,
               route_duration, route_summary, created_at,
               departed_at, paused_at, total_paused_ms,
-              multi_modal_segments, multi_modal_stops
+              multi_modal_segments, multi_modal_stops,
+              pause_category, pause_reason
        FROM shipments WHERE tracking_id = $1`, [req.params.id]
     );
 
@@ -607,6 +608,8 @@ router.patch('/:id/pause', authMiddleware, async (req, res) => {
     if (newPaused && pause_category) {
       action = `Paused — ${pause_category}`;
       if (pause_reason) action += `: ${pause_reason}`;
+    } else if (!newPaused && shipment.pause_category === 'Transit Stop') {
+      action = `Resumed flight from transit stop: ${shipment.pause_reason || 'Transit Stop'}`;
     }
 
     const nowIso = new Date().toISOString();

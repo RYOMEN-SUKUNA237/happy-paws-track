@@ -4,7 +4,7 @@ import { MapPin, Pause, Play, Navigation, Clock, Package, Truck, RefreshCw, Loca
 import { Shipment } from './types';
 import * as api from '../../services/api';
 import mapboxgl from 'mapbox-gl';
-import { MAPBOX_TOKEN, initMapbox, interpolateAlongRoute, interpolateMultiModal, formatDistance, formatDuration, computeTimeBasedProgress, computeTimeRemaining, getRouteWithFallback, ROUTE_STYLES, ROUTE_STYLE, snapCoordsToRoute, haversineDistance, geocodeSearch } from '../../utils/mapbox';
+import { MAPBOX_TOKEN, initMapbox, interpolateAlongRoute, interpolateMultiModal, formatDistance, formatDuration, computeTimeBasedProgress, computeTimeRemaining, getRouteWithFallback, ROUTE_STYLES, ROUTE_STYLE, snapCoordsToRoute, haversineDistance, geocodeSearch, computeTransitStopThresholds } from '../../utils/mapbox';
 import { RouteSegment, TransitStop, findNearestHub } from '../../utils/transportPlanner';
 
 interface TrackMapProps { shipments: Shipment[]; setShipments: React.Dispatch<React.SetStateAction<Shipment[]>>; onRefresh: () => void; }
@@ -97,14 +97,71 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     if (!selectedId && activeShipments.length > 0) setSelectedId(activeShipments[0].trackingId);
   }, [activeShipments.length]);
 
+  // Keep track of which transit stops have already been auto-landed
+  const autoLandedStopsRef = useRef<Set<number>>(new Set());
+
+  // Initialize/sync autoLandedStopsRef when selected shipment loads
+  useEffect(() => {
+    if (!selectedFull) {
+      autoLandedStopsRef.current = new Set();
+      return;
+    }
+    const currentProg = computeTimeBasedProgress(selectedFull);
+    const newLanded = new Set<number>();
+    const segments = selectedFull.multi_modal_segments;
+    const stops = selectedFull.multi_modal_stops;
+    if (segments && stops) {
+      const thresholds = computeTransitStopThresholds(segments, stops);
+      for (const th of thresholds) {
+        if (currentProg >= th.progressPercent - 0.05) {
+          newLanded.add(th.stopIndex);
+        }
+      }
+    }
+    autoLandedStopsRef.current = newLanded;
+  }, [selectedId, selectedFull?.id]);
+
   // Live progress ticker
   useEffect(() => {
     if (!selectedFull) return;
-    const tick = () => { setProgress(computeTimeBasedProgress(selectedFull)); setEta(computeTimeRemaining(selectedFull)); };
+    const tick = () => {
+      const currentProg = computeTimeBasedProgress(selectedFull);
+      setProgress(currentProg);
+      setEta(computeTimeRemaining(selectedFull));
+
+      // Auto-pause detection
+      const segments = selectedFull.multi_modal_segments;
+      const stops = selectedFull.multi_modal_stops;
+      if (segments && stops && selectedFull.status === 'in-transit') {
+        const thresholds = computeTransitStopThresholds(segments, stops);
+        for (const th of thresholds) {
+          // If progress is reset/altered before this stop, enable re-triggering
+          if (currentProg < th.progressPercent - 0.2) {
+            autoLandedStopsRef.current.delete(th.stopIndex);
+          }
+          // If we reached/crossed the threshold and haven't landed yet
+          else if (currentProg >= th.progressPercent && !autoLandedStopsRef.current.has(th.stopIndex)) {
+            autoLandedStopsRef.current.add(th.stopIndex);
+            
+            // Trigger landing
+            api.shipments.transitLand(selectedFull.tracking_id || selectedFull.trackingId, {
+              airport_name: th.name,
+              reason: `Scheduled layover at ${th.name}`,
+            }).then(() => {
+              setPauseToast(`✈️ Aircraft auto-landed at ${th.name}`);
+              setTimeout(() => setPauseToast(null), 3000);
+              onRefresh();
+            }).catch((err: any) => {
+              console.error(`Auto transit-land failed for ${th.name}:`, err.message);
+            });
+          }
+        }
+      }
+    };
     tick();
     const t = setInterval(tick, 2000);
     return () => clearInterval(t);
-  }, [selectedFull]);
+  }, [selectedFull, onRefresh]);
 
   // ResizeObserver for map visibility
   useEffect(() => {
@@ -335,7 +392,21 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     }
     if (pos) {
       const el = document.createElement('div');
-      el.innerHTML = `<div style="position:relative"><div style="width:22px;height:22px;border-radius:50%;background:${color};opacity:.25;position:absolute;top:-3px;left:-3px;animation:ping 1.5s infinite"></div><div style="width:16px;height:16px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,.3);position:relative;z-index:1"></div></div>`;
+      const isTransitLanded = s.is_paused && s.pause_category === 'Transit Stop';
+      if (isTransitLanded) {
+        const displayText = s.pause_reason || 'Transit Stop';
+        el.innerHTML = `
+          <div style="position:relative; display:flex; flex-direction:column; align-items:center;">
+            <div style="width:24px;height:24px;border-radius:50%;background:#f59e0b;opacity:.4;position:absolute;top:-4px;left:-4px;animation:ping 1.5s infinite"></div>
+            <div style="width:16px;height:16px;border-radius:50%;background:#f59e0b;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,.3);position:relative;z-index:2"></div>
+            <div style="position:absolute; bottom:22px; white-space:nowrap; background:rgba(15, 23, 42, 0.95); border:1px solid rgba(245, 158, 11, 0.6); color:#fbbf24; font-size:10px; font-weight:bold; padding:4px 8px; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.4); z-index:10; pointer-events:none; display:flex; align-items:center; gap:4px;">
+              <span>✈️ Landed: ${displayText}</span>
+            </div>
+          </div>
+        `;
+      } else {
+        el.innerHTML = `<div style="position:relative"><div style="width:22px;height:22px;border-radius:50%;background:${color};opacity:.25;position:absolute;top:-3px;left:-3px;animation:ping 1.5s infinite"></div><div style="width:16px;height:16px;border-radius:50%;background:${color};border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,.3);position:relative;z-index:1"></div></div>`;
+      }
       markersRef.current.push(new mapboxgl.Marker({ element: el }).setLngLat(pos).addTo(m));
     }
   }, [selectedId, mapReady, selectedFull, progress, isPanelOpen, alterProgress]);
@@ -641,42 +712,60 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
 
             {/* Selected Shipment Info */}
             <AnimatePresence>
-              {selected && selectedFull && (
-                <motion.div initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} exit={{opacity:0,y:10}} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex-shrink-0">
-                  <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                    <div>
-                      <p className="font-mono font-bold text-sm text-[#0a192f]">{selected.trackingId}</p>
-                      <p className="text-[11px] text-gray-400">{selected.origin} → {selected.destination}</p>
+              {selected && selectedFull && (() => {
+                const isTransitStopPaused = selectedFull && selectedIsPaused && selectedFull.pause_category === 'Transit Stop';
+                return (
+                  <motion.div initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} exit={{opacity:0,y:10}} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex-shrink-0">
+                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                      <div>
+                        <p className="font-mono font-bold text-sm text-[#0a192f]">{selected.trackingId}</p>
+                        <p className="text-[11px] text-gray-400">{selected.origin} → {selected.destination}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handlePauseResume}
+                          disabled={pausing}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150 disabled:opacity-60 border ${
+                            selectedIsPaused
+                              ? isTransitStopPaused
+                                ? 'bg-sky-50 text-sky-700 hover:bg-sky-100 border-sky-200'
+                                : 'bg-green-50 text-green-700 hover:bg-green-100 border-green-200'
+                              : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200'
+                          }`}
+                        >
+                          {pausing
+                            ? <Loader2 size={12} className="animate-spin"/>
+                            : selectedIsPaused
+                              ? isTransitStopPaused
+                                ? <><Play size={12}/>Resume Flight</>
+                                : <><Play size={12}/>Resume Shipment</>
+                              : <><Pause size={12}/>Pause Shipment</>}
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handlePauseResume}
-                        disabled={pausing}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150 disabled:opacity-60 ${
-                          selectedIsPaused
-                            ? 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200'
-                            : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
-                        }`}
-                      >
-                        {pausing
-                          ? <Loader2 size={12} className="animate-spin"/>
-                          : selectedIsPaused
-                            ? <><Play size={12}/>Resume Shipment</>
-                            : <><Pause size={12}/>Pause Shipment</>}
-                      </button>
-                    </div>
-                  </div>
-                  {/* On-Hold Banner */}
-                  {selectedIsPaused && (
-                    <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0"/>
-                      <p className="text-xs text-amber-700 font-semibold">⏸ This shipment is currently on hold</p>
-                    </div>
-                  )}
-                  <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                    <div><p className="text-gray-400 uppercase text-[10px]">Status</p><p className={`font-semibold capitalize ${selectedIsPaused ? 'text-amber-600' : 'text-[#0a192f]'}`}>{selectedIsPaused ? '⏸ On Hold' : selected.status.replace('-',' ')}</p></div>
-                    <div><p className="text-gray-400 uppercase text-[10px]">Progress</p><p className="font-semibold text-[#0a192f]">{Math.round(progress)}%</p></div>
-                    {eta && <div><p className="text-gray-400 uppercase text-[10px]">ETA</p><p className="font-semibold text-blue-600">{eta}</p></div>}
+                    {/* On-Hold / Transit Stop Banner */}
+                    {selectedIsPaused && (
+                      isTransitStopPaused ? (
+                        <div className="px-4 py-2 bg-sky-50 border-b border-sky-100 flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse flex-shrink-0"/>
+                          <p className="text-xs text-sky-700 font-semibold">✈️ Aircraft landed at transit stop: {selectedFull.pause_reason || 'Layover'}</p>
+                        </div>
+                      ) : (
+                        <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0"/>
+                          <p className="text-xs text-amber-700 font-semibold">⏸ This shipment is currently on hold</p>
+                        </div>
+                      )
+                    )}
+                    <div className="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <p className="text-gray-400 uppercase text-[10px]">Status</p>
+                        <p className={`font-semibold capitalize ${selectedIsPaused ? (isTransitStopPaused ? 'text-sky-600' : 'text-amber-600') : 'text-[#0a192f]'}`}>
+                          {selectedIsPaused ? (isTransitStopPaused ? '✈️ Landed (Transit)' : '⏸ On Hold') : selected.status.replace('-',' ')}
+                        </p>
+                      </div>
+                      <div><p className="text-gray-400 uppercase text-[10px]">Progress</p><p className="font-semibold text-[#0a192f]">{Math.round(progress)}%</p></div>
+                      {eta && <div><p className="text-gray-400 uppercase text-[10px]">ETA</p><p className="font-semibold text-blue-600">{eta}</p></div>}
                     {selectedFull.route_distance && <div><p className="text-gray-400 uppercase text-[10px]">Distance</p><p className="font-semibold text-[#0a192f]">{formatDistance(selectedFull.route_distance)}</p></div>}
                     <div><p className="text-gray-400 uppercase text-[10px]">Cargo</p><p className="font-semibold text-[#0a192f]">{selected.type}</p></div>
                     <div><p className="text-gray-400 uppercase text-[10px]">Weight</p><p className="font-semibold text-[#0a192f]">{selected.weight || 'N/A'}</p></div>
@@ -940,7 +1029,7 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
                     </div>
                   </div>
                 </motion.div>
-              )}
+              )})()}
             </AnimatePresence>
           </div>
         </div>

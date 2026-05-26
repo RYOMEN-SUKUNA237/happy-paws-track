@@ -170,12 +170,25 @@ const TrackingDashboard: React.FC = () => {
 
       if (s.status !== 'delivered' && s.status !== 'returned') {
         const curEl = document.createElement('div');
-        curEl.innerHTML = `
-          <div style="position:relative;">
-            <div style="width:28px;height:28px;border-radius:50%;background:#3b82f6;opacity:0.2;position:absolute;top:-6px;left:-6px;animation:ping 2s ease-in-out infinite;"></div>
-            <div style="width:16px;height:16px;border-radius:50%;background:#3b82f6;border:3px solid white;box-shadow:0 2px 12px rgba(59,130,246,0.4);position:relative;z-index:1;"></div>
-          </div>
-        `;
+        const isTransitLanded = s.is_paused && s.pause_category === 'Transit Stop';
+        if (isTransitLanded) {
+          curEl.innerHTML = `
+            <div style="position:relative; display:flex; flex-direction:column; align-items:center;">
+              <div style="width:24px;height:24px;border-radius:50%;background:#f59e0b;opacity:.4;position:absolute;top:-4px;left:-4px;animation:ping 1.5s infinite"></div>
+              <div style="width:16px;height:16px;border-radius:50%;background:#f59e0b;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,.3);position:relative;z-index:2"></div>
+              <div style="position:absolute; bottom:22px; white-space:nowrap; background:rgba(15, 23, 42, 0.95); border:1px solid rgba(245, 158, 11, 0.6); color:#fbbf24; font-size:10px; font-weight:bold; padding:4px 8px; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.4); z-index:10; pointer-events:none; display:flex; align-items:center; gap:4px;">
+                <span>✈️ Landed: ${s.pause_reason || 'Transit Stop'}</span>
+              </div>
+            </div>
+          `;
+        } else {
+          curEl.innerHTML = `
+            <div style="position:relative;">
+              <div style="width:28px;height:28px;border-radius:50%;background:#3b82f6;opacity:0.2;position:absolute;top:-6px;left:-6px;animation:ping 2s ease-in-out infinite;"></div>
+              <div style="width:16px;height:16px;border-radius:50%;background:#3b82f6;border:3px solid white;box-shadow:0 2px 12px rgba(59,130,246,0.4);position:relative;z-index:1;"></div>
+            </div>
+          `;
+        }
         const marker = new mapboxgl.Marker({ element: curEl })
           .setLngLat(currentPos)
           .addTo(m);
@@ -302,16 +315,28 @@ const TrackingDashboard: React.FC = () => {
                     <p className="text-blue-300 text-xs font-medium uppercase tracking-wider mb-1">Tracking Number</p>
                     <h1 className="text-2xl sm:text-3xl font-bold font-mono">{shipment.tracking_id}</h1>
                   </div>
-                  <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold ${
-                    statusConfig[shipment.status]?.bg || 'bg-gray-100'
-                  } ${statusConfig[shipment.status]?.color || 'text-gray-600'}`}>
-                    {statusConfig[shipment.status]?.icon}
-                    {statusConfig[shipment.status]?.label || shipment.status}
-                    {shipment.is_paused ? ' (On Hold)' : ''}
-                  </div>
+                  {(() => {
+                    const isTransitLanded = shipment.is_paused && shipment.pause_category === 'Transit Stop';
+                    if (isTransitLanded) {
+                      return (
+                        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-sky-500 text-white shadow-lg shadow-sky-500/20 border border-sky-400/30 animate-pulse">
+                          <span>✈️ Landed (Transit Stop)</span>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold ${
+                        statusConfig[shipment.status]?.bg || 'bg-gray-100'
+                      } ${statusConfig[shipment.status]?.color || 'text-gray-600'}`}>
+                        {statusConfig[shipment.status]?.icon}
+                        {statusConfig[shipment.status]?.label || shipment.status}
+                        {shipment.is_paused ? ' (On Hold)' : ''}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
-
+ 
               {/* Progress Steps */}
               <div className="px-6 sm:px-8 py-6">
                 <div className="flex items-center justify-between mb-2">
@@ -342,7 +367,7 @@ const TrackingDashboard: React.FC = () => {
                     );
                   })}
                 </div>
-
+ 
                 {/* Progress bar */}
                 <div className="mt-4">
                   <div className="flex justify-between text-xs text-gray-500 mb-1">
@@ -354,7 +379,7 @@ const TrackingDashboard: React.FC = () => {
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2.5">
                     <motion.div
-                      className={`h-2.5 rounded-full ${shipment.is_paused ? 'bg-amber-500' : 'bg-blue-600'}`}
+                      className={`h-2.5 rounded-full ${shipment.is_paused ? (shipment.pause_category === 'Transit Stop' ? 'bg-sky-500' : 'bg-amber-500') : 'bg-blue-600'}`}
                       initial={{ width: 0 }}
                       animate={{ width: `${Math.round(liveProgress)}%` }}
                       transition={{ duration: 1.2, ease: 'easeOut' }}
@@ -364,6 +389,21 @@ const TrackingDashboard: React.FC = () => {
               </div>
             </div>
 
+            {/* Transit Stop Layover Banner */}
+            {shipment.is_paused && shipment.pause_category === 'Transit Stop' && (
+              <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4 shadow-sm shadow-sky-500/5 animate-fade-in">
+                <div className="w-10 h-10 bg-sky-500 text-white rounded-xl flex items-center justify-center flex-shrink-0 animate-bounce text-lg">
+                  ✈️
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-bold text-sky-900">Scheduled Transit Layover</h4>
+                  <p className="text-xs text-sky-700 leading-relaxed">
+                    The aircraft carrying your cargo has successfully arrived at intermediate transit stop: <strong className="font-semibold">{shipment.pause_reason || 'Transit Airport'}</strong>. Processing and refueling are underway. The flight is scheduled to resume shortly.
+                  </p>
+                </div>
+              </div>
+            )}
+ 
             {/* Main Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Map */}
