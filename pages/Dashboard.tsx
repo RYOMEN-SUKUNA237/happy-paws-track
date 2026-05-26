@@ -18,6 +18,45 @@ import AdminReviewsPage from './admin/Reviews';
 import AdminEmailsPage from './admin/Emails';
 import * as api from '../services/api';
 
+// ── Error Boundary ──────────────────────────────────────────────────
+// Catches render-time crashes in child components so they show an inline
+// error message instead of wiping the entire admin dashboard blank.
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode; label?: string },
+  { hasError: boolean; error: string }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: '' };
+  }
+  static getDerivedStateFromError(err: any) {
+    return { hasError: true, error: err?.message || String(err) };
+  }
+  componentDidCatch(err: any, info: any) {
+    console.error('[Dashboard ErrorBoundary]', err, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-6 bg-red-50 border border-red-200 rounded-lg text-center">
+          <p className="font-semibold text-red-700 mb-1">
+            {this.props.label || 'Component'} encountered an error
+          </p>
+          <p className="text-xs text-red-500 mb-3 font-mono break-all">{this.state.error}</p>
+          <button
+            className="px-4 py-2 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+            onClick={() => this.setState({ hasError: false, error: '' })}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+
 const sidebarItems: { id: AdminPage; label: string; icon: React.ReactNode }[] = [
   { id: 'overview', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
   { id: 'couriers', label: 'Couriers', icon: <Users size={20} /> },
@@ -460,7 +499,9 @@ const Dashboard: React.FC = () => {
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
           {/* TrackMap: always mounted, shown/hidden via CSS */}
           <div style={{ display: activePage === 'track-map' ? 'block' : 'none' }}>
-            <TrackMap shipments={shipments} setShipments={setShipments} onRefresh={fetchData} />
+            <ErrorBoundary label="Live Map">
+              <TrackMap shipments={shipments} setShipments={setShipments} onRefresh={fetchData} />
+            </ErrorBoundary>
           </div>
 
           {/* All other pages */}
@@ -473,11 +514,14 @@ const Dashboard: React.FC = () => {
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.2 }}
               >
-                {renderPage()}
+                <ErrorBoundary label={activePage}>
+                  {renderPage()}
+                </ErrorBoundary>
               </motion.div>
             </AnimatePresence>
           )}
         </main>
+
       </div>
     </div>
   );

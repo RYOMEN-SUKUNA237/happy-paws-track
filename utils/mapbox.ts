@@ -550,19 +550,25 @@ export function computeTransitStopThresholds(
   let totalH = 0;
 
   for (let i = 0; i < segments.length; i++) {
-    slices.push({ type: 'segment', index: i, durationHours: segments[i].durationHours, startFraction: 0, endFraction: 0 });
-    totalH += segments[i].durationHours;
+    // Guard: coerce to number — DB may return strings
+    const segDur = Number(segments[i].durationHours) || 0;
+    slices.push({ type: 'segment', index: i, durationHours: segDur, startFraction: 0, endFraction: 0 });
+    totalH += segDur;
 
     // Add transit stop after this segment if one exists at the segment's destination
     const stop = transitStops.find(ts =>
-      Math.abs(ts.coords[0] - segments[i].to.coords[0]) < 0.1 &&
-      Math.abs(ts.coords[1] - segments[i].to.coords[1]) < 0.1
+      Math.abs(Number(ts.coords[0]) - Number(segments[i].to?.coords?.[0] ?? 0)) < 0.1 &&
+      Math.abs(Number(ts.coords[1]) - Number(segments[i].to?.coords?.[1] ?? 0)) < 0.1
     );
     if (stop) {
-      slices.push({ type: 'transit', index: transitStops.indexOf(stop), durationHours: stop.waitHours, startFraction: 0, endFraction: 0 });
-      totalH += stop.waitHours;
+      const waitDur = Number(stop.waitHours) || 0;
+      slices.push({ type: 'transit', index: transitStops.indexOf(stop), durationHours: waitDur, startFraction: 0, endFraction: 0 });
+      totalH += waitDur;
     }
   }
+
+  // Guard against division by zero (would produce NaN which crashes rendering)
+  if (totalH <= 0) return [];
 
   // Calculate fraction ranges
   let cursor = 0;

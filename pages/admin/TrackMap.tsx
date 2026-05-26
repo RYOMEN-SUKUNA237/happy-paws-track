@@ -73,24 +73,34 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     }
   }, [selectedFull]);
 
-  // Load full data for all shipments
+  // Load full data for all shipments — only refetch when the set of tracking IDs changes,
+  // NOT on every prop reference update (which caused the blank-screen feedback loop).
+  const shipmentIds = shipments.map(s => s.trackingId).join(',');
   useEffect(() => {
     api.shipments.list({ limit: 100 }).then(res => {
-      const map: Record<string, any> = {};
+      const dict: Record<string, any> = {};
+      const parse = (v: any) => { if (!v) return null; let p = v; while (typeof p === 'string') { try { p = JSON.parse(p); } catch { break; } } return p; };
       for (const s of res.shipments) {
-        const parse = (v: any) => { if (!v) return null; let p = v; while (typeof p === 'string') { try { p = JSON.parse(p); } catch { break; } } return p; };
-        map[s.tracking_id] = {
+        const segments = parse(s.multi_modal_segments);
+        // Ensure numeric fields are numbers (DB may return strings)
+        if (Array.isArray(segments)) {
+          segments.forEach((seg: any) => {
+            if (seg) seg.durationHours = Number(seg.durationHours) || 0;
+          });
+        }
+        dict[s.tracking_id] = {
           ...s,
           trackingId: s.tracking_id,
           route_data: parse(s.route_data),
-          multi_modal_segments: parse(s.multi_modal_segments),
+          multi_modal_segments: segments,
           multi_modal_stops: parse(s.multi_modal_stops),
           scheduled_transit_stops: parse(s.scheduled_transit_stops)
         };
       }
-      setFullData(map);
+      setFullData(dict);
     }).catch(() => {});
-  }, [shipments]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shipmentIds]);
 
   // Auto-select first shipment
   useEffect(() => {
