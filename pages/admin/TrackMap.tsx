@@ -4,7 +4,7 @@ import { MapPin, Pause, Play, Navigation, Clock, Package, Truck, RefreshCw, Loca
 import { Shipment } from './types';
 import * as api from '../../services/api';
 import mapboxgl from 'mapbox-gl';
-import { MAPBOX_TOKEN, initMapbox, interpolateAlongRoute, interpolateMultiModal, formatDistance, formatDuration, computeTimeBasedProgress, computeTimeRemaining, getRouteWithFallback, ROUTE_STYLES, ROUTE_STYLE, snapCoordsToRoute, haversineDistance, geocodeSearch, computeTransitStopThresholds } from '../../utils/mapbox';
+import { MAPBOX_TOKEN, initMapbox, interpolateAlongRoute, interpolateMultiModal, formatDistance, formatDuration, computeTimeBasedProgress, computeTimeRemaining, getRouteWithFallback, ROUTE_STYLES, ROUTE_STYLE, snapCoordsToRoute, haversineDistance, geocodeSearch } from '../../utils/mapbox';
 import { RouteSegment, TransitStop, findNearestHub } from '../../utils/transportPlanner';
 
 interface TrackMapProps { shipments: Shipment[]; setShipments: React.Dispatch<React.SetStateAction<Shipment[]>>; onRefresh: () => void; }
@@ -107,29 +107,9 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     if (!selectedId && activeShipments.length > 0) setSelectedId(activeShipments[0].trackingId);
   }, [activeShipments.length]);
 
-  // Keep track of which transit stops have already been auto-landed
-  const autoLandedStopsRef = useRef<Set<number>>(new Set());
-
-  // Initialize/sync autoLandedStopsRef when selected shipment loads
-  useEffect(() => {
-    if (!selectedFull) {
-      autoLandedStopsRef.current = new Set();
-      return;
-    }
-    const currentProg = computeTimeBasedProgress(selectedFull);
-    const newLanded = new Set<number>();
-    const segments = selectedFull.multi_modal_segments;
-    const stops = selectedFull.multi_modal_stops;
-    if (segments && stops) {
-      const thresholds = computeTransitStopThresholds(segments, stops);
-      for (const th of thresholds) {
-        if (currentProg >= th.progressPercent - 0.05) {
-          newLanded.add(th.stopIndex);
-        }
-      }
-    }
-    autoLandedStopsRef.current = newLanded;
-  }, [selectedId, selectedFull?.id]);
+  // Auto-transit-landing is temporarily disabled.
+  // Transit stops UI remains available but auto-landing logic is removed
+  // to prevent crashes from malformed segment coordinate data.
 
   // Live progress ticker
   useEffect(() => {
@@ -138,35 +118,7 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
       const currentProg = computeTimeBasedProgress(selectedFull);
       setProgress(currentProg);
       setEta(computeTimeRemaining(selectedFull));
-
-      // Auto-pause detection
-      const segments = selectedFull.multi_modal_segments;
-      const stops = selectedFull.multi_modal_stops;
-      if (segments && stops && selectedFull.status === 'in-transit') {
-        const thresholds = computeTransitStopThresholds(segments, stops);
-        for (const th of thresholds) {
-          // If progress is reset/altered before this stop, enable re-triggering
-          if (currentProg < th.progressPercent - 0.2) {
-            autoLandedStopsRef.current.delete(th.stopIndex);
-          }
-          // If we reached/crossed the threshold and haven't landed yet
-          else if (currentProg >= th.progressPercent && !autoLandedStopsRef.current.has(th.stopIndex)) {
-            autoLandedStopsRef.current.add(th.stopIndex);
-            
-            // Trigger landing
-            api.shipments.transitLand(selectedFull.tracking_id || selectedFull.trackingId, {
-              airport_name: th.name,
-              reason: `Scheduled layover at ${th.name}`,
-            }).then(() => {
-              setPauseToast(`✈️ Aircraft auto-landed at ${th.name}`);
-              setTimeout(() => setPauseToast(null), 3000);
-              onRefresh();
-            }).catch((err: any) => {
-              console.error(`Auto transit-land failed for ${th.name}:`, err.message);
-            });
-          }
-        }
-      }
+      // Auto-transit-landing removed — see comment above.
     };
     tick();
     const t = setInterval(tick, 2000);
