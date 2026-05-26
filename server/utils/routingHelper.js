@@ -39,7 +39,14 @@ function greatCircleArc(from, to, numPoints = 120) {
 }
 
 async function getMapboxRoute(fromLng, fromLat, toLng, toLat, token) {
-  if (!token) return null;
+  if (!token) {
+    const dist = haversineKm(fromLat, fromLng, toLat, toLng);
+    return {
+      coordinates: [[fromLng, fromLat], [toLng, toLat]],
+      distanceKm: dist,
+      durationHours: dist / 80,
+    };
+  }
   try {
     const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${fromLng},${fromLat};${toLng},${toLat}?geometries=geojson&overview=full&access_token=${token}`;
 
