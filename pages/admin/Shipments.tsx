@@ -182,6 +182,8 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
     }
   };
 
+  const [isResolvingStop, setIsResolvingStop] = useState(false);
+
   const handleStopSearch = async (val: string) => {
     setStopSearchQuery(val);
     if (val.trim().length > 2) {
@@ -196,7 +198,9 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
     }
   };
 
-  const handleAddCreationTransitStop = async (sug: { lng: number; lat: number; place_name: string }) => {
+  const resolveAndAddStop = async (sug: { lng: number; lat: number; place_name: string }) => {
+    if (isResolvingStop) return;
+    setIsResolvingStop(true);
     try {
       const hub = await findNearestHub([sug.lng, sug.lat], 'airport');
       if (hub) {
@@ -213,6 +217,55 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsResolvingStop(false);
+    }
+  };
+
+  const handleAddCreationTransitStop = async (sug: { lng: number; lat: number; place_name: string }) => {
+    await resolveAndAddStop(sug);
+  };
+
+  /** Auto-resolve: geocode the typed text and pick the closest airport */
+  const handleStopSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (isResolvingStop) return;
+
+    // If there are suggestions, use the first one
+    if (stopSuggestions.length > 0) {
+      await resolveAndAddStop(stopSuggestions[0]);
+      return;
+    }
+
+    // Otherwise geocode the raw query and use the first result
+    const q = stopSearchQuery.trim();
+    if (q.length < 2) return;
+    setIsResolvingStop(true);
+    try {
+      const results = await geocodeSearch(q);
+      if (results.length > 0) {
+        const first = results[0];
+        const hub = await findNearestHub([first.lng, first.lat], 'airport');
+        if (hub) {
+          const newStop = { name: hub.name, lat: hub.coords[1], lng: hub.coords[0] };
+          setCustomStops(prev => {
+            const next = [...prev, newStop];
+            recalculatePlansWithStops(next);
+            return next;
+          });
+          setStopSearchQuery('');
+          setStopSuggestions([]);
+        } else {
+          alert('Could not find closest airport for that location.');
+        }
+      } else {
+        alert('No location found for that search.');
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsResolvingStop(false);
     }
   };
 
@@ -247,6 +300,33 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
       alert(`Error: ${e.message}`);
     } finally {
       setIsAddingStop(false);
+    }
+  };
+
+  /** Enter key handler for mid-flight stop search */
+  const handleMidflightStopKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (!selectedShipment || isAddingStop) return;
+
+    let target: { lng: number; lat: number; place_name: string } | null = null;
+
+    if (stopSuggestions.length > 0) {
+      target = stopSuggestions[0];
+    } else {
+      const q = stopSearchQuery.trim();
+      if (q.length < 2) return;
+      try {
+        const results = await geocodeSearch(q);
+        if (results.length > 0) target = results[0];
+      } catch (err) {
+        console.error(err);
+        return;
+      }
+    }
+
+    if (target) {
+      await handleAddMidflightStop(target);
     }
   };
 
@@ -959,16 +1039,26 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                               type="text"
                               value={stopSearchQuery}
                               onChange={(e) => handleStopSearch(e.target.value)}
-                              placeholder="Search city/country to add transit stop..."
-                              className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs outline-none focus:border-blue-500"
+                              onKeyDown={handleStopSearchKeyDown}
+                              placeholder={isResolvingStop ? "Resolving closest airport..." : "Search city/country to add transit stop..."}
+                              disabled={isResolvingStop}
+                              className="w-full px-3 py-1.5 pr-8 border border-gray-200 rounded-lg text-xs outline-none focus:border-blue-500 disabled:bg-gray-50"
                             />
+                            {isResolvingStop && (
+                              <div className="absolute right-3 top-1.5">
+                                <Loader2 size={12} className="animate-spin text-blue-500" />
+                              </div>
+                            )}
                             {stopSuggestions.length > 0 && (
                               <div className="relative z-20 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-inner">
                                 {stopSuggestions.map((sug, idx) => (
                                   <button
                                     key={idx}
                                     type="button"
-                                    onClick={() => handleAddCreationTransitStop(sug)}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      handleAddCreationTransitStop(sug);
+                                    }}
                                     className="w-full text-left px-2.5 py-1.5 text-xs text-gray-700 hover:bg-blue-50 transition-colors border-b border-gray-50 last:border-b-0"
                                   >
                                     📍 {sug.place_name}
@@ -1237,18 +1327,28 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                                 <div className="relative">
                                   <input
                                     type="text"
-                                    placeholder="Search city/country to add stop..."
+                                    placeholder={isAddingStop ? "Resolving closest airport..." : "Search city/country to add stop..."}
                                     value={stopSearchQuery}
                                     onChange={(e) => handleStopSearch(e.target.value)}
-                                    className="w-full px-2.5 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    onKeyDown={handleMidflightStopKeyDown}
+                                    disabled={isAddingStop}
+                                    className="w-full px-2.5 py-1 pr-8 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:bg-gray-50"
                                   />
+                                  {isAddingStop && (
+                                    <div className="absolute right-2 top-1.5">
+                                      <Loader2 size={12} className="animate-spin text-sky-500" />
+                                    </div>
+                                  )}
                                   {stopSuggestions.length > 0 && (
                                     <div className="relative z-20 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-inner">
                                       {stopSuggestions.map((sug, idx) => (
                                         <button
                                           key={idx}
                                           type="button"
-                                          onClick={() => handleAddMidflightStop(sug)}
+                                          onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            handleAddMidflightStop(sug);
+                                          }}
                                           className="w-full text-left px-2.5 py-1.5 text-[11px] text-gray-700 hover:bg-sky-50 transition-colors border-b border-gray-50 last:border-b-0"
                                         >
                                           📍 {sug.place_name}

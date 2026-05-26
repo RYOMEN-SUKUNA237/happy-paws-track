@@ -396,6 +396,33 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     }
   };
 
+  /** Enter key handler for mid-flight stop search */
+  const handleMidflightStopKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (!selectedFull || isAddingStop) return;
+
+    let target: { lng: number; lat: number; place_name: string } | null = null;
+
+    if (stopSuggestions.length > 0) {
+      target = stopSuggestions[0];
+    } else {
+      const q = stopSearchQuery.trim();
+      if (q.length < 2) return;
+      try {
+        const results = await geocodeSearch(q);
+        if (results.length > 0) target = results[0];
+      } catch (err) {
+        console.error(err);
+        return;
+      }
+    }
+
+    if (target) {
+      await handleAddMidflightStop(target);
+    }
+  };
+
   const handleRemoveMidflightStop = async (idx: number) => {
     if (!selectedFull) return;
     if (!confirm('Are you sure you want to remove this transit stop?')) return;
@@ -773,18 +800,28 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
                                 <div className="relative">
                                   <input
                                     type="text"
-                                    placeholder="Search city/country to add stop..."
+                                    placeholder={isAddingStop ? "Resolving closest airport..." : "Search city/country to add stop..."}
                                     value={stopSearchQuery}
                                     onChange={(e) => handleStopSearch(e.target.value)}
-                                    className="w-full px-2.5 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                    onKeyDown={handleMidflightStopKeyDown}
+                                    disabled={isAddingStop}
+                                    className="w-full px-2.5 py-1 pr-8 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:bg-gray-50"
                                   />
+                                  {isAddingStop && (
+                                    <div className="absolute right-2 top-1.5">
+                                      <Loader2 size={12} className="animate-spin text-sky-500" />
+                                    </div>
+                                  )}
                                   {stopSuggestions.length > 0 && (
                                     <div className="relative z-20 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-inner font-normal">
                                       {stopSuggestions.map((sug, idx) => (
                                         <button
                                           key={idx}
                                           type="button"
-                                          onClick={() => handleAddMidflightStop(sug)}
+                                          onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            handleAddMidflightStop(sug);
+                                          }}
                                           className="w-full text-left px-2.5 py-1.5 text-[11px] text-gray-700 hover:bg-sky-50 transition-colors border-b border-gray-50 last:border-b-0"
                                         >
                                           📍 {sug.place_name}
