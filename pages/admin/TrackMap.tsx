@@ -42,9 +42,15 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
   const [stopSearchQuery, setStopSearchQuery] = useState('');
   const [stopSuggestions, setStopSuggestions] = useState<Array<{ lng: number; lat: number; place_name: string }>>([]);
   const [isAddingStop, setIsAddingStop] = useState(false);
+  const [isMapClickStopActive, setIsMapClickStopActive] = useState(false);
   const [isLandingTransit, setIsLandingTransit] = useState(false);
   const [transitLandReason, setTransitLandReason] = useState('');
   const [showTransitLandModal, setShowTransitLandModal] = useState(false);
+
+  const isMapClickStopActiveRef = useRef(isMapClickStopActive);
+  useEffect(() => {
+    isMapClickStopActiveRef.current = isMapClickStopActive;
+  }, [isMapClickStopActive]);
 
   const activeShipments = shipments.filter(s => ['in-transit','out-for-delivery','paused','picked-up'].includes(s.status));
   const selected = selectedId ? activeShipments.find(s => s.trackingId === selectedId) : null;
@@ -117,6 +123,51 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     handleMapClickSnapRef.current = handleMapClickSnap;
   }, [handleMapClickSnap]);
 
+  const handleMapClickAddStop = async (coords: [number, number]) => {
+    if (!selectedFull || isAddingStop) return;
+    setIsAddingStop(true);
+    setStopSearchQuery(`${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}`);
+    try {
+      let placeName = 'Map Coordinates';
+      try {
+        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${coords[0]},${coords[1]}.json?access_token=${MAPBOX_TOKEN}&types=place,address&limit=1`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.features && data.features[0]) {
+          placeName = data.features[0].place_name.split(',')[0];
+        }
+      } catch (err) {
+        console.error("Reverse geocoding failed:", err);
+      }
+
+      setStopSearchQuery(placeName);
+      const hub = await findNearestHub(coords, 'airport', placeName);
+      if (hub) {
+        await api.shipments.addTransitStop(selectedFull.trackingId, {
+          airport_name: hub.name,
+          lat: hub.coords[1],
+          lng: hub.coords[0],
+        });
+        setPauseToast(`✈️ Added transit stop: ${hub.name}`);
+        setTimeout(() => setPauseToast(null), 3000);
+        setStopSearchQuery('');
+        setIsMapClickStopActive(false);
+        onRefresh();
+      } else {
+        alert('Could not find closest airport.');
+      }
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setIsAddingStop(false);
+    }
+  };
+
+  const handleMapClickAddStopRef = useRef(handleMapClickAddStop);
+  useEffect(() => {
+    handleMapClickAddStopRef.current = handleMapClickAddStop;
+  }, [handleMapClickAddStop]);
+
   // Init map
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
@@ -128,6 +179,12 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     m.on('load', () => setMapReady(true));
     
     m.on('click', (e) => {
+      if (isMapClickStopActiveRef.current) {
+        const clickCoords: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+        handleMapClickAddStopRef.current(clickCoords);
+        return;
+      }
+
       if (selectedFullRef.current && selectedFullRef.current.route_data?.coordinates?.length > 1) {
         const routeCoords = selectedFullRef.current.route_data.coordinates;
         const clickCoords: [number, number] = [e.lngLat.lng, e.lngLat.lat];
@@ -144,6 +201,15 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     map.current = m;
     return () => { m.remove(); map.current = null; };
   }, []);
+
+  // Change map cursor when in stop-pick mode
+  useEffect(() => {
+    if (!map.current) return;
+    const canvas = map.current.getCanvas();
+    if (canvas) {
+      canvas.style.cursor = isMapClickStopActive ? 'crosshair' : '';
+    }
+  }, [isMapClickStopActive]);
 
   // Draw route for selected shipment
   useEffect(() => {
@@ -373,8 +439,10 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
   const handleAddMidflightStop = async (sug: { lng: number; lat: number; place_name: string }) => {
     if (!selectedFull || isAddingStop) return;
     setIsAddingStop(true);
+    setStopSearchQuery(sug.place_name);
+    setStopSuggestions([]);
     try {
-      const hub = await findNearestHub([sug.lng, sug.lat], 'airport');
+      const hub = await findNearestHub([sug.lng, sug.lat], 'airport', sug.place_name);
       if (hub) {
         await api.shipments.addTransitStop(selectedFull.trackingId, {
           airport_name: hub.name,
@@ -384,7 +452,6 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
         setPauseToast(`✈️ Added transit stop: ${hub.name}`);
         setTimeout(() => setPauseToast(null), 3000);
         setStopSearchQuery('');
-        setStopSuggestions([]);
         onRefresh();
       } else {
         alert('Could not find closest airport.');
@@ -409,12 +476,16 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     } else {
       const q = stopSearchQuery.trim();
       if (q.length < 2) return;
+      setIsAddingStop(true);
       try {
         const results = await geocodeSearch(q);
-        if (results.length > 0) target = results[0];
+        if (results.length > 0) {
+          target = results[0];
+        }
       } catch (err) {
         console.error(err);
-        return;
+      } finally {
+        setIsAddingStop(false);
       }
     }
 
@@ -796,7 +867,25 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
 
                               {/* Add stop form */}
                               <div className="space-y-1.5 relative pt-1 border-t border-sky-100/50">
-                                <p className="text-[10px] font-bold text-gray-400 uppercase">Add Mid-Flight Stop &amp; Reroute</p>
+                                <div className="flex items-center justify-between">
+                                  <p className="text-[10px] font-bold text-gray-400 uppercase">Add Mid-Flight Stop &amp; Reroute</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsMapClickStopActive(!isMapClickStopActive)}
+                                    className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border transition-all flex items-center gap-1 ${
+                                      isMapClickStopActive
+                                        ? 'bg-sky-600 border-sky-600 text-white animate-pulse'
+                                        : 'bg-white hover:bg-sky-50 border-gray-200 text-sky-600'
+                                    }`}
+                                  >
+                                    🎯 {isMapClickStopActive ? 'Click Map Now' : 'Select on Map'}
+                                  </button>
+                                </div>
+                                {isMapClickStopActive && (
+                                  <p className="text-[10px] text-sky-600 font-semibold italic">
+                                    📍 Click anywhere on the map above to select that coordinate as a transit stop.
+                                  </p>
+                                )}
                                 <div className="relative">
                                   <input
                                     type="text"

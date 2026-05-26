@@ -205,44 +205,70 @@ const FALLBACK_SEAPORTS = [
 
 export async function findNearestHub(
   coords: [number, number],
-  type: 'airport' | 'port'
+  type: 'airport' | 'port',
+  placeName?: string
 ): Promise<{ name: string; coords: [number, number] } | null> {
   const hubType = type === 'airport' ? 'airport' : 'seaport';
   const [lng, lat] = coords;
 
-  // ── Try local backend API first (uses CSV datasets) ──────────────────────
+  // ── Step 0: Try Mapbox geocoding for "${cityName} Airport/Port" if placeName is provided ──
+  if (placeName && MAPBOX_TOKEN) {
+    try {
+      const cityName = placeName.split(',')[0].trim();
+      const searchQuery = type === 'airport' ? `${cityName} Airport` : `${cityName} Port`;
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchQuery)}.json?access_token=${MAPBOX_TOKEN}&limit=3`;
+      const res = await fetchWithTimeout(url, 5000);
+      const data = await res.json();
+
+      if (data.features && data.features.length > 0) {
+        const best = data.features.find((f: any) => {
+          const name = (f.place_name || '').toLowerCase();
+          if (type === 'airport') {
+            return name.includes('airport') || name.includes('aeropuerto') ||
+              name.includes('aéroport') || name.includes('flughafen') ||
+              name.includes('aerodrome') || name.includes('aeroport') || name.includes('field');
+          } else {
+            return name.includes('port') || name.includes('terminal') ||
+              name.includes('harbour') || name.includes('harbor') ||
+              name.includes('dock') || name.includes('maritime');
+          }
+        }) || data.features[0];
+
+        if (best) {
+          const shortName = best.place_name.split(',').slice(0, 2).join(',').trim();
+          return { name: shortName, coords: best.center as [number, number] };
+        }
+      }
+    } catch (e) {
+      console.error("Named hub geocoding failed, falling back:", e);
+    }
+  }
+
+  // ── Step 1: Try local backend API (uses database CSV datasets) ──
   try {
     const backendUrl = getBackendUrl();
     const res = await fetchWithTimeout(
       `${backendUrl}/api/routing/nearest-hub?lat=${lat}&lng=${lng}&type=${hubType}&limit=1`,
-      6000  // 6 second timeout for backend hub lookup
+      6000
     );
 
     if (res.ok) {
       const data = await res.json();
       const hub = data.results?.[0];
       if (hub) {
-        const displayName = hub.iata
-          ? `${hub.name} (${hub.iata})`
-          : hub.name;
+        const displayName = hub.iata ? `${hub.name} (${hub.iata})` : hub.name;
         return { name: displayName, coords: [hub.lng, hub.lat] };
       }
     }
   } catch (_e) {
-    // Backend unavailable or timed out — fall through to Mapbox geocoding
+    // Fall through to geocoding
   }
 
-  // ── Fallback 1: Mapbox geocoding (legacy behavior) ──────────────────────────
+  // ── Step 2: Proximity-based Mapbox geocoding ──
   if (MAPBOX_TOKEN) {
     try {
-      const query = type === 'airport'
-        ? 'international airport'
-        : 'seaport cargo port terminal';
-
-      const url =
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json` +
-        `?proximity=${lng},${lat}&access_token=${MAPBOX_TOKEN}&limit=5&types=poi`;
-
+      const query = type === 'airport' ? 'international airport' : 'seaport cargo port terminal';
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?proximity=${lng},${lat}&access_token=${MAPBOX_TOKEN}&limit=5&types=poi`;
       const res = await fetchWithTimeout(url, 8000);
       const data = await res.json();
 
@@ -260,18 +286,19 @@ export async function findNearestHub(
           }
         });
 
-        const best = filtered.length > 0 ? filtered[0] : data.features[0];
-        if (best) {
+        // ONLY use the proximity POI if it is actually a validated airport/port!
+        if (filtered.length > 0) {
+          const best = filtered[0];
           const shortName = best.place_name.split(',').slice(0, 2).join(',').trim();
           return { name: shortName, coords: best.center as [number, number] };
         }
       }
     } catch (e) {
-      // Hub geocoding failed or timed out
+      // Fall through to local fallback list
     }
   }
 
-  // ── Fallback 2: Local list of major international hubs ──
+  // ── Step 3: Absolute local fallback (guarantees finding a real airport/port!) ──
   const candidates = type === 'airport' ? FALLBACK_AIRPORTS : FALLBACK_SEAPORTS;
   const scored = candidates.map(c => ({
     ...c,

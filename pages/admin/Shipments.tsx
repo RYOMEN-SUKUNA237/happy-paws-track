@@ -96,7 +96,10 @@ const CityAutocomplete: React.FC<{
             <button
               key={i}
               type="button"
-              onClick={() => handleSelect(s)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleSelect(s);
+              }}
               className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-blue-50 hover:text-[#0a192f] transition-colors flex items-start gap-2 border-b border-gray-50 last:border-0"
             >
               <MapPin size={14} className="text-blue-500 mt-0.5 flex-shrink-0" />
@@ -201,8 +204,10 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
   const resolveAndAddStop = async (sug: { lng: number; lat: number; place_name: string }) => {
     if (isResolvingStop) return;
     setIsResolvingStop(true);
+    setStopSearchQuery(sug.place_name);
+    setStopSuggestions([]);
     try {
-      const hub = await findNearestHub([sug.lng, sug.lat], 'airport');
+      const hub = await findNearestHub([sug.lng, sug.lat], 'airport', sug.place_name);
       if (hub) {
         const newStop = { name: hub.name, lat: hub.coords[1], lng: hub.coords[0] };
         setCustomStops(prev => {
@@ -211,7 +216,6 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
           return next;
         });
         setStopSearchQuery('');
-        setStopSuggestions([]);
       } else {
         alert('Could not find closest airport for that location.');
       }
@@ -246,7 +250,9 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
       const results = await geocodeSearch(q);
       if (results.length > 0) {
         const first = results[0];
-        const hub = await findNearestHub([first.lng, first.lat], 'airport');
+        setStopSearchQuery(first.place_name);
+        setStopSuggestions([]);
+        const hub = await findNearestHub([first.lng, first.lat], 'airport', first.place_name);
         if (hub) {
           const newStop = { name: hub.name, lat: hub.coords[1], lng: hub.coords[0] };
           setCustomStops(prev => {
@@ -255,7 +261,6 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
             return next;
           });
           setStopSearchQuery('');
-          setStopSuggestions([]);
         } else {
           alert('Could not find closest airport for that location.');
         }
@@ -280,8 +285,10 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
   const handleAddMidflightStop = async (sug: { lng: number; lat: number; place_name: string }) => {
     if (!selectedShipment || isAddingStop) return;
     setIsAddingStop(true);
+    setStopSearchQuery(sug.place_name);
+    setStopSuggestions([]);
     try {
-      const hub = await findNearestHub([sug.lng, sug.lat], 'airport');
+      const hub = await findNearestHub([sug.lng, sug.lat], 'airport', sug.place_name);
       if (hub) {
         await api.shipments.addTransitStop(selectedShipment.trackingId, {
           airport_name: hub.name,
@@ -291,7 +298,6 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
         setAlterToast(`✈️ Added transit stop: ${hub.name}`);
         setTimeout(() => setAlterToast(null), 3000);
         setStopSearchQuery('');
-        setStopSuggestions([]);
         onRefresh();
       } else {
         alert('Could not find closest airport.');
@@ -316,12 +322,16 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
     } else {
       const q = stopSearchQuery.trim();
       if (q.length < 2) return;
+      setIsAddingStop(true);
       try {
         const results = await geocodeSearch(q);
-        if (results.length > 0) target = results[0];
+        if (results.length > 0) {
+          target = results[0];
+        }
       } catch (err) {
         console.error(err);
-        return;
+      } finally {
+        setIsAddingStop(false);
       }
     }
 
