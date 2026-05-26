@@ -79,7 +79,14 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
       const map: Record<string, any> = {};
       for (const s of res.shipments) {
         const parse = (v: any) => { if (!v) return null; let p = v; while (typeof p === 'string') { try { p = JSON.parse(p); } catch { break; } } return p; };
-        map[s.tracking_id] = { ...s, route_data: parse(s.route_data), multi_modal_segments: parse(s.multi_modal_segments), multi_modal_stops: parse(s.multi_modal_stops), scheduled_transit_stops: parse(s.scheduled_transit_stops) };
+        map[s.tracking_id] = {
+          ...s,
+          trackingId: s.tracking_id,
+          route_data: parse(s.route_data),
+          multi_modal_segments: parse(s.multi_modal_segments),
+          multi_modal_stops: parse(s.multi_modal_stops),
+          scheduled_transit_stops: parse(s.scheduled_transit_stops)
+        };
       }
       setFullData(map);
     }).catch(() => {});
@@ -143,7 +150,7 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
       setStopSearchQuery(placeName);
       const hub = await findNearestHub(coords, 'airport', placeName);
       if (hub) {
-        await api.shipments.addTransitStop(selectedFull.trackingId, {
+        await api.shipments.addTransitStop(selectedFull.tracking_id || selectedFull.trackingId, {
           airport_name: hub.name,
           lat: hub.coords[1],
           lng: hub.coords[0],
@@ -444,7 +451,7 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     try {
       const hub = await findNearestHub([sug.lng, sug.lat], 'airport', sug.place_name);
       if (hub) {
-        await api.shipments.addTransitStop(selectedFull.trackingId, {
+        await api.shipments.addTransitStop(selectedFull.tracking_id || selectedFull.trackingId, {
           airport_name: hub.name,
           lat: hub.coords[1],
           lng: hub.coords[0],
@@ -498,7 +505,7 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     if (!selectedFull) return;
     if (!confirm('Are you sure you want to remove this transit stop?')) return;
     try {
-      await api.shipments.deleteTransitStop(selectedFull.trackingId, idx);
+      await api.shipments.deleteTransitStop(selectedFull.tracking_id || selectedFull.trackingId, idx);
       setPauseToast('✈️ Removed transit stop');
       setTimeout(() => setPauseToast(null), 3000);
       onRefresh();
@@ -512,7 +519,7 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     setIsLandingTransit(true);
     try {
       const airportName = transitLandReason.trim() || 'Transit Airport';
-      await api.shipments.transitLand(selectedFull.trackingId, {
+      await api.shipments.transitLand(selectedFull.tracking_id || selectedFull.trackingId, {
         airport_name: airportName,
         reason: `Scheduled layover at ${airportName}`,
       });
