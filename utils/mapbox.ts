@@ -581,9 +581,16 @@ export async function fetchWeather(lat: number, lng: number): Promise<WeatherDat
 
 // ─── ROUTE STYLE CONSTANTS FOR MULTI-MODAL ──────────────────────────
 
-export const ROUTE_STYLES = {
+export interface RouteStyle {
+  color: string;
+  width: number;
+  opacity: number;
+  dasharray?: number[];
+}
+
+export const ROUTE_STYLES: Record<string, RouteStyle> = {
   road: { color: '#0a192f', width: 5, dasharray: [1], opacity: 0.85 },
-  air:  { color: '#ec4899', width: 5, dasharray: [8, 5], opacity: 0.95 },
+  air:  { color: '#ec4899', width: 5, opacity: 0.95 },
   sea:  { color: '#3b82f6', width: 4, dasharray: [4, 4], opacity: 0.85 },
 };
 

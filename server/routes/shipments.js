@@ -918,7 +918,7 @@ async function rebuildShipmentAirRoute(shipment, customStops) {
     const stop = customStops[i];
     const distSeg = haversineKm(currentLat, currentLng, stop.lat, stop.lng);
     const tSeg = distSeg / SPEEDS.plane;
-    const arcCoords = straightLine(
+    const arcCoords = greatCircleArc(
       { lat: currentLat, lng: currentLng },
       { lat: stop.lat, lng: stop.lng },
       120
@@ -954,7 +954,7 @@ async function rebuildShipmentAirRoute(shipment, customStops) {
   // Final air segment: last stop to destination airport
   const finalFlightKm = haversineKm(currentLat, currentLng, dAirport.lat, dAirport.lng);
   const finalFlightHours = finalFlightKm / SPEEDS.plane;
-  const finalArcCoords = straightLine(
+  const finalArcCoords = greatCircleArc(
     { lat: currentLat, lng: currentLng },
     { lat: dAirport.lat, lng: dAirport.lng },
     120

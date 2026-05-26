@@ -30,6 +30,8 @@ export interface Shipment {
   estimatedDelivery: string;
   progress: number; // 0-100
   isPaused: boolean;
+  paused_at?: string | null;
+  pausedAt?: string | null;
   pauseCategory?: string;
   pauseReason?: string;
   lat?: number;

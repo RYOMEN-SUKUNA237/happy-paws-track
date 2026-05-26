@@ -441,9 +441,19 @@ const TrackingDashboard: React.FC = () => {
                             <p className="text-[10px] text-gray-400 uppercase">Est. Arrival</p>
                             <p className="font-medium text-[#0a192f]">
                               {(() => {
-                                const d = new Date(String(shipment.estimated_delivery));
+                                let est = shipment.estimated_delivery;
+                                if (shipment.is_paused && shipment.paused_at) {
+                                  const elapsedPause = Date.now() - new Date(shipment.paused_at).getTime();
+                                  if (elapsedPause > 0) {
+                                    const baseTime = new Date(String(est)).getTime();
+                                    if (!isNaN(baseTime)) {
+                                      est = new Date(baseTime + elapsedPause).toISOString();
+                                    }
+                                  }
+                                }
+                                const d = new Date(String(est));
                                 return isNaN(d.getTime())
-                                  ? shipment.estimated_delivery
+                                  ? est
                                   : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
                               })()}
                             </p>

@@ -196,7 +196,15 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
         const style = ROUTE_STYLES[seg.mode] || ROUTE_STYLES.road;
         const srcId = `src-seg-${i}`; const layerId = `route-seg-${i}`;
         try { m.addSource(srcId, { type:'geojson', data:{ type:'Feature', properties:{}, geometry:{ type:'LineString', coordinates: seg.coordinates } } }); } catch {}
-        try { m.addLayer({ id: layerId, type:'line', source: srcId, layout:{'line-join':'round','line-cap':'round'}, paint:{'line-color': style.color,'line-width': style.width,'line-opacity': style.opacity,'line-dasharray': style.dasharray } }); } catch {}
+        const paintObj: any = {
+          'line-color': style.color,
+          'line-width': style.width,
+          'line-opacity': style.opacity,
+        };
+        if (style.dasharray) {
+          paintObj['line-dasharray'] = style.dasharray;
+        }
+        try { m.addLayer({ id: layerId, type:'line', source: srcId, layout:{'line-join':'round','line-cap':'round'}, paint: paintObj }); } catch {}
         seg.coordinates.forEach(c => bounds.extend(c as [number,number]));
       });
       if (s.origin_lat) { addMarker(Number(s.origin_lng), Number(s.origin_lat), '#10b981', 'Origin'); bounds.extend([Number(s.origin_lng), Number(s.origin_lat)]); }

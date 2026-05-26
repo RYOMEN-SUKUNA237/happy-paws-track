@@ -1034,8 +1034,18 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                 {selectedShipment.estimatedDelivery && (
                   <p className="text-xs text-blue-600 font-medium mt-1">
                     ⏱ Est. arrival: {(() => {
-                      const d = new Date(String(selectedShipment.estimatedDelivery));
-                      return isNaN(d.getTime()) ? selectedShipment.estimatedDelivery : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+                      let est = selectedShipment.estimatedDelivery;
+                      if (selectedShipment.isPaused && selectedShipment.paused_at && est) {
+                        const elapsedPause = Date.now() - new Date(selectedShipment.paused_at).getTime();
+                        if (elapsedPause > 0) {
+                          const baseTime = new Date(String(est)).getTime();
+                          if (!isNaN(baseTime)) {
+                            est = new Date(baseTime + elapsedPause).toISOString();
+                          }
+                        }
+                      }
+                      const d = new Date(String(est));
+                      return isNaN(d.getTime()) ? est : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
                     })()}
                   </p>
                 )}

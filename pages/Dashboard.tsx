@@ -105,6 +105,8 @@ const Dashboard: React.FC = () => {
         estimatedDelivery: s.estimated_delivery || '',
         progress: s.computed_progress ?? s.progress,
         isPaused: !!s.is_paused,
+        pausedAt: s.paused_at || undefined,
+        paused_at: s.paused_at || undefined,
         pauseCategory: s.pause_category || undefined,
         pauseReason: s.pause_reason || undefined,
         lat: s.current_lat || s.dest_lat,

@@ -212,7 +212,7 @@ router.post('/plan', async (req, res) => {
       // Leg 2: Air — Airport A → Airport B (Great Circle)
       const flightKm = haversineKm(oAirport.lat, oAirport.lng, dAirport.lat, dAirport.lng);
       const flightHours = flightKm / SPEEDS.plane;
-      const arcCoords = straightLine(
+      const arcCoords = greatCircleArc(
         { lat: oAirport.lat, lng: oAirport.lng },
         { lat: dAirport.lat, lng: dAirport.lng },
         150
