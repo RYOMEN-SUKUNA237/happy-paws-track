@@ -17,7 +17,7 @@ import { MAPBOX_TOKEN } from './mapbox';
 import type { RouteSegment, TransitStop } from './transportPlanner';
 
 const API_BASE =
-  import.meta.env.VITE_API_URL ||
+  (import.meta as any).env?.VITE_API_URL ||
   (typeof window !== 'undefined'
     ? `${window.location.protocol}//${window.location.hostname}:5000`
     : 'http://localhost:5000');

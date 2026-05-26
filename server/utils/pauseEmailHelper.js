@@ -16,6 +16,19 @@ function getPauseCategoryContent(pauseCategory, location) {
   const cat = (pauseCategory || '').toLowerCase();
   const held = location ? `at <strong>${location}</strong>` : 'at an intermediary transit facility';
 
+  if (cat.includes('transit stop') || cat.includes('layover')) {
+    return {
+      emoji: '✈️',
+      label: 'Aircraft Transit Stop',
+      color: '#0284c7',
+      headline: 'Aircraft Landed for Scheduled Transit Layover',
+      body: `We wish to inform you that the aircraft transporting your shipment has landed ${held} for a scheduled transit layover. This stop is a planned part of the flight plan for logistics operations, refueling, cargo sorting, and flight clearance procedures.<br><br>
+      The cargo remains secure on board the aircraft or within the airport's secure transit zone. The flight will resume its journey to the final destination once all standard transit procedures are completed.`,
+      action: 'No action is required from you. The shipment will resume active flight status shortly.',
+      urgency: null,
+    };
+  }
+
   if (cat.includes('custom')) {
     return {
       emoji: '🛃',

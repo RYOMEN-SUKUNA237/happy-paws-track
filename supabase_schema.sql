@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS shipments (
   total_paused_ms     BIGINT DEFAULT 0,
   pause_category      TEXT,
   pause_reason        TEXT,
+  scheduled_transit_stops JSONB DEFAULT '[]',
   created_at          TIMESTAMPTZ DEFAULT NOW(),
   updated_at          TIMESTAMPTZ DEFAULT NOW()
 );

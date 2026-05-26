@@ -253,6 +253,15 @@ export const shipments = {
   alterLocation: (id: string, data: { progress: number; location_name?: string; lat?: number; lng?: number }) =>
     apiFetch(`/shipments/${id}/alter-location`, { method: 'PATCH', body: JSON.stringify(data) }),
 
+  addTransitStop: (id: string, data: { airport_name: string; lat: number; lng: number; reason?: string }) =>
+    apiFetch(`/shipments/${id}/transit-stop`, { method: 'POST', body: JSON.stringify(data) }),
+
+  deleteTransitStop: (id: string, index: number) =>
+    apiFetch(`/shipments/${id}/transit-stop/${index}`, { method: 'DELETE' }),
+
+  transitLand: (id: string, data: { airport_name: string; reason?: string }) =>
+    apiFetch(`/shipments/${id}/transit-land`, { method: 'POST', body: JSON.stringify(data) }),
+
   // Public endpoint — no auth required
   track: (trackingId: string) =>
     fetch(`${API_BASE}/shipments/${trackingId}/track`).then(r => r.json()),

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Package, Search, Plus, Pause, Play, Eye, MapPin, Edit2,
   CheckCircle, Clock, Truck, RotateCcw, X, ArrowRight, Loader2, Navigation
@@ -6,7 +7,7 @@ import {
 import { Shipment, Courier } from './types';
 import * as api from '../../services/api';
 import { geocodeAddress, geocodeSearch, getRoute, determineTransportModes, formatDistance, MAPBOX_TOKEN, getRouteWithFallback, snapCoordsToRoute, interpolateAlongRoute } from '../../utils/mapbox';
-import { buildTransportPlans, formatPlanDuration, TransportPlan, RouteSegment, TransitStop } from '../../utils/transportPlanner';
+import { buildTransportPlans, formatPlanDuration, TransportPlan, RouteSegment, TransitStop, findNearestHub } from '../../utils/transportPlanner';
 
 interface ShipmentsProps {
   shipments: Shipment[];
@@ -142,6 +143,148 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
   const [editForm, setEditForm] = useState({ senderName: '', senderEmail: '', receiverName: '', receiverEmail: '', estimatedDelivery: '', description: '', specialInstructions: '' });
   const [saving, setSaving] = useState(false);
 
+  // Transit Stops States
+  const [customStops, setCustomStops] = useState<Array<{ name: string; lat: number; lng: number }>>([]);
+  const [stopSearchQuery, setStopSearchQuery] = useState('');
+  const [stopSuggestions, setStopSuggestions] = useState<Array<{ lng: number; lat: number; place_name: string }>>([]);
+  const [isTransitPanelOpen, setIsTransitPanelOpen] = useState(false);
+  const [isAddingStop, setIsAddingStop] = useState(false);
+  const [isLandingTransit, setIsLandingTransit] = useState(false);
+  const [transitLandReason, setTransitLandReason] = useState('');
+  const [showTransitLandModal, setShowTransitLandModal] = useState(false);
+
+  const recalculatePlansWithStops = async (stops: Array<{ name: string; lat: number; lng: number }>) => {
+    if (!form.origin || !form.destination) return;
+    setPlanLoading(true);
+    try {
+      const [oGeo, dGeo] = await Promise.all([geocodeAddress(form.origin), geocodeAddress(form.destination)]);
+      if (oGeo && dGeo) {
+        const toRad = (d: number) => (d * Math.PI) / 180;
+        const R = 6371;
+        const dLat = toRad(dGeo.lat - oGeo.lat);
+        const dLon = toRad(dGeo.lng - oGeo.lng);
+        const a = Math.sin(dLat/2)**2 + Math.cos(toRad(oGeo.lat)) * Math.cos(toRad(dGeo.lat)) * Math.sin(dLon/2)**2;
+        const haversineDist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+        const formatStops = stops.map(s => ({ name: s.name, coords: [s.lng, s.lat] as [number, number] }));
+        const plans = await buildTransportPlans(form.origin, form.destination, [oGeo.lng, oGeo.lat], [dGeo.lng, dGeo.lat], haversineDist, formatStops);
+        setTransportPlans(plans);
+        const rec = plans.find(p => p.id === 'air') || plans.find(p => p.isRecommended) || plans[0];
+        if (rec) {
+          setSelectedPlanId(rec.id);
+          setForm(p => ({ ...p, estimatedDelivery: rec.estimatedDeliveryDate }));
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setPlanLoading(false);
+    }
+  };
+
+  const handleStopSearch = async (val: string) => {
+    setStopSearchQuery(val);
+    if (val.trim().length > 2) {
+      try {
+        const results = await geocodeSearch(val);
+        setStopSuggestions(results);
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      setStopSuggestions([]);
+    }
+  };
+
+  const handleAddCreationTransitStop = async (sug: { lng: number; lat: number; place_name: string }) => {
+    try {
+      const hub = await findNearestHub([sug.lng, sug.lat], 'airport');
+      if (hub) {
+        const newStop = { name: hub.name, lat: hub.coords[1], lng: hub.coords[0] };
+        setCustomStops(prev => {
+          const next = [...prev, newStop];
+          recalculatePlansWithStops(next);
+          return next;
+        });
+        setStopSearchQuery('');
+        setStopSuggestions([]);
+      } else {
+        alert('Could not find closest airport for that location.');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRemoveCreationTransitStop = (idx: number) => {
+    setCustomStops(prev => {
+      const next = prev.filter((_, i) => i !== idx);
+      recalculatePlansWithStops(next);
+      return next;
+    });
+  };
+
+  const handleAddMidflightStop = async (sug: { lng: number; lat: number; place_name: string }) => {
+    if (!selectedShipment || isAddingStop) return;
+    setIsAddingStop(true);
+    try {
+      const hub = await findNearestHub([sug.lng, sug.lat], 'airport');
+      if (hub) {
+        await api.shipments.addTransitStop(selectedShipment.trackingId, {
+          airport_name: hub.name,
+          lat: hub.coords[1],
+          lng: hub.coords[0],
+        });
+        setAlterToast(`✈️ Added transit stop: ${hub.name}`);
+        setTimeout(() => setAlterToast(null), 3000);
+        setStopSearchQuery('');
+        setStopSuggestions([]);
+        onRefresh();
+      } else {
+        alert('Could not find closest airport.');
+      }
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setIsAddingStop(false);
+    }
+  };
+
+  const handleRemoveMidflightStop = async (idx: number) => {
+    if (!selectedShipment) return;
+    if (!confirm('Are you sure you want to remove this transit stop?')) return;
+    try {
+      await api.shipments.deleteTransitStop(selectedShipment.trackingId, idx);
+      setAlterToast('✈️ Removed transit stop');
+      setTimeout(() => setAlterToast(null), 3000);
+      onRefresh();
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    }
+  };
+
+  const handleTransitLand = async () => {
+    if (!selectedShipment || isLandingTransit) return;
+    setIsLandingTransit(true);
+    try {
+      const airportName = transitLandReason.trim() || 'Transit Airport';
+      await api.shipments.transitLand(selectedShipment.trackingId, {
+        airport_name: airportName,
+        reason: `Scheduled layover at ${airportName}`,
+      });
+      setAlterToast(`✈️ Aircraft successfully landed at ${airportName}`);
+      setTimeout(() => setAlterToast(null), 3000);
+      setShowTransitLandModal(false);
+      setTransitLandReason('');
+      onRefresh();
+      setSelectedShipment(null); // close detail panel on success
+    } catch (e: any) {
+      alert(`Error: ${e.message}`);
+    } finally {
+      setIsLandingTransit(false);
+    }
+  };
+
   // Alter Location States
   const [isAltering, setIsAltering] = useState(false);
   const [alterProgress, setAlterProgress] = useState(0);
@@ -159,8 +302,12 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
       const fullShipment = shipments.find(s => s.id === selectedShipment.id);
       let parse = (v: any) => { if (!v) return null; let p = v; while (typeof p === 'string') { try { p = JSON.parse(p); } catch { break; } } return p; };
       const routeDataParsed = fullShipment ? parse(fullShipment.route_data) : null;
+      const transportModesParsed = fullShipment ? parse(fullShipment.transport_modes) : null;
+      const scheduledStopsParsed = fullShipment ? parse(fullShipment.scheduled_transit_stops) : null;
       
       (selectedShipment as any).route_data_parsed = routeDataParsed;
+      (selectedShipment as any).transport_modes_parsed = transportModesParsed;
+      (selectedShipment as any).scheduled_transit_stops_parsed = scheduledStopsParsed || [];
 
       setAlterProgress(Math.round(selectedShipment.progress || 0));
       setAlterLocationName('');
@@ -169,6 +316,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
       setLocationQuery('');
       setSuggestions([]);
       setIsAltering(false);
+      setIsTransitPanelOpen(false);
     }
   }, [selectedShipment, shipments]);
 
@@ -311,8 +459,10 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
         route_summary: routeSummary,
         multi_modal_segments: selPlan?.segments ? JSON.stringify(selPlan.segments) : undefined,
         multi_modal_stops: selPlan?.transitStops ? JSON.stringify(selPlan.transitStops) : undefined,
+        scheduled_transit_stops: customStops,
       } as any);
       setForm({ sender: '', senderEmail: '', receiver: '', receiverEmail: '', origin: '', destination: '', weight: '', type: 'General', courierId: '', estimatedDelivery: '', petSpecies: '', petBreed: '', petAge: '', petColor: '', petWeight: '', petGender: '', petMicrochipId: '', petVaccinationStatus: 'up-to-date', petVetName: '', petVetPhone: '', petVetClinic: '', petCrateType: 'standard', petTempMin: '', petTempMax: '', petFeedingSchedule: '', petMedications: '', petSpecialCare: '', petOwnerConsent: false });
+      setCustomStops([]);
       setRoutePreview(null);
       setTransportPlans([]);
       setSelectedPlanId(null);
@@ -785,6 +935,51 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                         );
                       })}
 
+                      {selectedPlanId === 'air' && (
+                        <div className="bg-white border border-gray-200 rounded-lg p-3 space-y-2 mt-2">
+                          <p className="text-[10px] font-bold text-[#0a192f] uppercase tracking-wide flex items-center gap-1">
+                            ✈️ Scheduled Transit Stops (Optional)
+                          </p>
+                          
+                          {customStops.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pb-1">
+                              {customStops.map((stop, idx) => (
+                                <span key={idx} className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-100">
+                                  ✈️ {stop.name}
+                                  <button type="button" onClick={() => handleRemoveCreationTransitStop(idx)} className="hover:bg-blue-200/50 p-0.5 rounded-full">
+                                    <X size={10} />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="relative">
+                            <input
+                              type="text"
+                              value={stopSearchQuery}
+                              onChange={(e) => handleStopSearch(e.target.value)}
+                              placeholder="Search city/country to add transit stop..."
+                              className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs outline-none focus:border-blue-500"
+                            />
+                            {stopSuggestions.length > 0 && (
+                              <div className="absolute z-50 left-0 right-0 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                                {stopSuggestions.map((sug, idx) => (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => handleAddCreationTransitStop(sug)}
+                                    className="w-full text-left px-2.5 py-1.5 text-xs text-gray-700 hover:bg-blue-50 transition-colors border-b border-gray-50 last:border-b-0"
+                                  >
+                                    📍 {sug.place_name}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       <div>
                         <label className="text-[10px] text-gray-400 uppercase font-semibold tracking-wide">Override arrival date &amp; time (optional)</label>
                         <input type="datetime-local" value={form.estimatedDelivery} onChange={e => setForm(p => ({ ...p, estimatedDelivery: e.target.value }))}
@@ -968,6 +1163,97 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                       </motion.div>
                     )}
                   </AnimatePresence>
+                  {/* ✈️ Transit Stops Card */}
+                  {(() => {
+                    const isAirFlight = selectedShipment.type === 'Live Animals' ||
+                      (selectedShipment as any).transport_modes_parsed?.some((m: string) => m.toLowerCase().includes('flight') || m.toLowerCase().includes('air') || m.toLowerCase().includes('plane')) ||
+                      (selectedShipment as any).route_summary?.toLowerCase().includes('air') ||
+                      selectedShipment.trackingId.includes('AIR');
+
+                    return isAirFlight ? (
+                      <div className="border-t border-gray-100 pt-3 mt-3">
+                        <button
+                          onClick={() => setIsTransitPanelOpen(!isTransitPanelOpen)}
+                          className="flex items-center gap-1.5 text-xs font-bold text-sky-600 hover:text-sky-800 transition-colors"
+                        >
+                          ✈️ {isTransitPanelOpen ? "Hide Transit Stop Options" : "Scheduled Transit Stops (Admin)"}
+                        </button>
+
+                        <AnimatePresence>
+                          {isTransitPanelOpen && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: "auto" }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="overflow-hidden mt-3 space-y-3 bg-sky-50/30 p-3 rounded-xl border border-sky-100 text-xs"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold text-sky-800 uppercase tracking-wide">
+                                  Transit Stop Control Panel
+                                </span>
+                                <button
+                                  onClick={() => setShowTransitLandModal(true)}
+                                  className="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded text-[10px] font-semibold transition-colors"
+                                >
+                                  Land Aircraft Now
+                                </button>
+                              </div>
+
+                              {/* Scheduled Stops list */}
+                              <div className="space-y-1.5">
+                                <p className="text-[10px] font-bold text-gray-400 uppercase">Current Scheduled Stops</p>
+                                {((selectedShipment as any).scheduled_transit_stops_parsed || []).length === 0 ? (
+                                  <p className="text-gray-500 italic text-[11px]">No transit stops scheduled.</p>
+                                ) : (
+                                  <div className="space-y-1">
+                                    {((selectedShipment as any).scheduled_transit_stops_parsed || []).map((stop: any, idx: number) => (
+                                      <div key={idx} className="flex items-center justify-between p-1.5 bg-white border border-gray-150 rounded-lg">
+                                        <span className="font-semibold text-gray-700">✈️ {stop.name}</span>
+                                        <button
+                                          onClick={() => handleRemoveMidflightStop(idx)}
+                                          className="text-red-500 hover:text-red-700 text-[10px] font-semibold"
+                                        >
+                                          Remove
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Add stop form */}
+                              <div className="space-y-1.5 relative pt-1 border-t border-sky-100/50">
+                                <p className="text-[10px] font-bold text-gray-400 uppercase">Add Mid-Flight Stop &amp; Reroute</p>
+                                <div className="relative">
+                                  <input
+                                    type="text"
+                                    placeholder="Search city/country to add stop..."
+                                    value={stopSearchQuery}
+                                    onChange={(e) => handleStopSearch(e.target.value)}
+                                    className="w-full px-2.5 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                  />
+                                  {stopSuggestions.length > 0 && (
+                                    <div className="absolute left-0 right-0 z-30 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                                      {stopSuggestions.map((sug, idx) => (
+                                        <button
+                                          key={idx}
+                                          type="button"
+                                          onClick={() => handleAddMidflightStop(sug)}
+                                          className="w-full text-left px-2.5 py-1.5 text-[11px] text-gray-700 hover:bg-sky-50 transition-colors border-b border-gray-50 last:border-b-0"
+                                        >
+                                          📍 {sug.place_name}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               )}
 
@@ -1245,6 +1531,50 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                   {pauseModal.shipment.isPaused
                     ? <><Play size={14} /> Resume & Notify Customer</>
                     : <><Pause size={14} /> Pause & Notify Customer</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Transit Landing Modal */}
+      {showTransitLandModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowTransitLandModal(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-scale-in" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 bg-sky-900 text-white">
+              <h4 className="text-sm font-bold flex items-center gap-1.5">✈️ Aircraft Transit Landing</h4>
+              <button onClick={() => setShowTransitLandModal(false)} className="hover:bg-sky-850 p-1 rounded text-white/80 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Immediately trigger an aircraft landing at an intermediate transit layover. This will pause the shipment, calculate paused hours, and send automated transit notification emails.
+              </p>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">Transit Airport Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Dubai Intl Airport (DXB)"
+                  value={transitLandReason}
+                  onChange={(e) => setTransitLandReason(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg text-xs outline-none focus:border-sky-500"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowTransitLandModal(false)}
+                  className="flex-1 px-4 py-2 border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleTransitLand}
+                  disabled={!transitLandReason.trim() || isLandingTransit}
+                  className="flex-1 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1 transition-colors disabled:opacity-50"
+                >
+                  {isLandingTransit ? <Loader2 size={12} className="animate-spin" /> : 'Confirm Landing'}
                 </button>
               </div>
             </div>

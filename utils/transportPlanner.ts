@@ -273,7 +273,8 @@ export async function buildTransportPlans(
   destName: string,
   originCoords: [number, number],
   destCoords: [number, number],
-  routeDistanceKm: number
+  routeDistanceKm: number,
+  customTransitStops: Array<{ name: string; coords: [number, number] }> = []
 ): Promise<TransportPlan[]> {
   const plans: TransportPlan[] = [];
   // Use straight-line (haversine) distance as the primary trigger for air/sea
@@ -371,7 +372,84 @@ export async function buildTransportPlans(
 
     let totalFlightHours = 0;
 
-    if (needsTransit) {
+    if (customTransitStops && customTransitStops.length > 0) {
+      // Build air segments sequentially through custom transit stops!
+      let currentCoords = oAirport.coords;
+      let currentName = oAirport.name;
+
+      for (let i = 0; i < customTransitStops.length; i++) {
+        const stop = customTransitStops[i];
+        const distSeg = haversineKm(currentCoords, stop.coords);
+        const tSeg = distSeg / SPEEDS.plane;
+        const arc = generateGreatCircleArc(currentCoords, stop.coords, 120);
+
+        segments.push({
+          mode: 'air',
+          coordinates: arc,
+          from: { name: currentName, coords: currentCoords },
+          to: { name: stop.name, coords: stop.coords },
+          distanceKm: Math.round(distSeg),
+          durationHours: tSeg,
+          speedKmh: SPEEDS.plane,
+          label: `Cargo Flight (Leg ${i + 1})`,
+          icon: '✈️',
+        });
+
+        legs.push({
+          mode: 'plane',
+          icon: '✈️',
+          label: `Cargo Flight (Leg ${i + 1})`,
+          from: currentName,
+          to: stop.name,
+          distanceKm: Math.round(distSeg),
+          durationHours: tSeg,
+          speedKmh: SPEEDS.plane,
+        });
+
+        transitStops.push({
+          name: stop.name,
+          coords: stop.coords,
+          type: 'transit_airport',
+          waitHours: TRANSFER.transitBreak,
+          label: `Transit Stop: ${stop.name}`,
+          icon: '✈️',
+        });
+
+        totalFlightHours += tSeg + TRANSFER.transitBreak;
+        currentCoords = stop.coords;
+        currentName = stop.name;
+      }
+
+      // Final flight segment: last stop to destination airport
+      const finalFlightKm = haversineKm(currentCoords, dAirport.coords);
+      const finalFlightHours = finalFlightKm / SPEEDS.plane;
+      const finalArcCoords = generateGreatCircleArc(currentCoords, dAirport.coords, 120);
+
+      segments.push({
+        mode: 'air',
+        coordinates: finalArcCoords,
+        from: { name: currentName, coords: currentCoords },
+        to: { name: dAirport.name, coords: dAirport.coords },
+        distanceKm: Math.round(finalFlightKm),
+        durationHours: finalFlightHours,
+        speedKmh: SPEEDS.plane,
+        label: 'Cargo Flight (Final Leg)',
+        icon: '✈️',
+      });
+
+      legs.push({
+        mode: 'plane',
+        icon: '✈️',
+        label: 'Cargo Flight (Final Leg)',
+        from: currentName,
+        to: dAirport.name,
+        distanceKm: Math.round(finalFlightKm),
+        durationHours: finalFlightHours,
+        speedKmh: SPEEDS.plane,
+      });
+
+      totalFlightHours += finalFlightHours;
+    } else if (needsTransit) {
       // Find a transit airport midway
       const transitAirport = await findTransitAirport(oAirport, dAirport);
 

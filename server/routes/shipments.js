@@ -3,6 +3,8 @@ const { pool } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 const { generateTrackingId } = require('../utils/generators');
 const { sendMail, buildShipmentCreationEmail, buildShipmentPauseEmail, buildShipmentStatusChangeEmail } = require('../utils/mailer');
+const { findNearestHub } = require('../utils/hubLoader');
+const { haversineKm, greatCircleArc, getMapboxRoute } = require('../utils/routingHelper');
 let createTrackingUpdateDraft;
 try {
   createTrackingUpdateDraft = require('./emails').createTrackingUpdateDraft;
@@ -203,7 +205,7 @@ router.post('/', authMiddleware, async (req, res) => {
       courier_id, customer_id, weight, dimensions, cargo_type,
       description, declared_value, insurance, estimated_delivery, special_instructions,
       route_data, transport_modes, route_distance, route_duration, route_summary,
-      multi_modal_segments, multi_modal_stops
+      multi_modal_segments, multi_modal_stops, scheduled_transit_stops
     } = req.body;
 
     if (!sender_name || !receiver_name || !origin || !destination) {
@@ -259,8 +261,8 @@ router.post('/', authMiddleware, async (req, res) => {
         status, courier_id, customer_id, weight, dimensions, cargo_type,
         description, declared_value, insurance, estimated_delivery, special_instructions,
         route_data, transport_modes, route_distance, route_duration, route_summary,
-        departed_at, multi_modal_segments, multi_modal_stops
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32) RETURNING *
+        departed_at, multi_modal_segments, multi_modal_stops, scheduled_transit_stops
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33) RETURNING *
     `, [
       trackingId,
       sender_name, sender_email || null, sender_phone || null,
@@ -276,7 +278,8 @@ router.post('/', authMiddleware, async (req, res) => {
       route_distance || null, route_duration || null, route_summary || null,
       departedAt,
       multi_modal_segments ? (typeof multi_modal_segments === 'string' ? multi_modal_segments : JSON.stringify(multi_modal_segments)) : null,
-      multi_modal_stops ? (typeof multi_modal_stops === 'string' ? multi_modal_stops : JSON.stringify(multi_modal_stops)) : null
+      multi_modal_stops ? (typeof multi_modal_stops === 'string' ? multi_modal_stops : JSON.stringify(multi_modal_stops)) : null,
+      scheduled_transit_stops ? (typeof scheduled_transit_stops === 'string' ? scheduled_transit_stops : JSON.stringify(scheduled_transit_stops)) : '[]'
     ]);
 
     const shipment = inserted[0];
@@ -860,6 +863,399 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     res.json({ message: 'Shipment deleted successfully.' });
   } catch (err) {
     console.error('Delete shipment error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// ─── AIR TRANSIT ROUTING REBUILDER ──────────────────────────────────────────
+async function rebuildShipmentAirRoute(shipment, customStops) {
+  const originLat = parseFloat(shipment.origin_lat);
+  const originLng = parseFloat(shipment.origin_lng);
+  const destLat = parseFloat(shipment.dest_lat);
+  const destLng = parseFloat(shipment.dest_lng);
+  const token = process.env.MAPBOX_TOKEN || null;
+
+  const oAirport = findNearestHub(originLat, originLng, 'airport') || { name: 'Origin Airport', lat: originLat, lng: originLng };
+  const dAirport = findNearestHub(destLat, destLng, 'airport') || { name: 'Destination Airport', lat: destLat, lng: destLng };
+
+  const SPEEDS = { truck: 75, plane: 850 };
+  const WAIT = { airportBoarding: 3, airportArrival: 2, transitBreak: 3 };
+
+  const segments = [];
+  const transitStops = [];
+
+  // Leg 1: Road — Origin to Origin Airport
+  const leg1Road = await getMapboxRoute(originLng, originLat, oAirport.lng, oAirport.lat, token);
+  segments.push({
+    mode: 'road',
+    coordinates: leg1Road.coordinates,
+    from: { lat: originLat, lng: originLng, name: 'Origin' },
+    to: { lat: oAirport.lat, lng: oAirport.lng, name: oAirport.name },
+    distanceKm: Math.round(leg1Road.distanceKm),
+    durationHours: leg1Road.durationHours,
+    speedKmh: SPEEDS.truck,
+    label: 'Truck to Airport',
+    icon: '🚛',
+  });
+
+  // Hub boarding stop
+  transitStops.push({
+    name: oAirport.name,
+    coords: [oAirport.lng, oAirport.lat],
+    type: 'airport',
+    waitHours: WAIT.airportBoarding,
+    label: 'Boarding & Security Check',
+    icon: '🛫',
+  });
+
+  let totalFlightHours = 0;
+  let currentLat = oAirport.lat;
+  let currentLng = oAirport.lng;
+  let currentName = oAirport.name;
+
+  // Custom air segments through transit stops
+  for (let i = 0; i < customStops.length; i++) {
+    const stop = customStops[i];
+    const distSeg = haversineKm(currentLat, currentLng, stop.lat, stop.lng);
+    const tSeg = distSeg / SPEEDS.plane;
+    const arcCoords = greatCircleArc(
+      { lat: currentLat, lng: currentLng },
+      { lat: stop.lat, lng: stop.lng },
+      120
+    );
+
+    segments.push({
+      mode: 'air',
+      coordinates: arcCoords,
+      from: { lat: currentLat, lng: currentLng, name: currentName },
+      to: { lat: stop.lat, lng: stop.lng, name: stop.name },
+      distanceKm: Math.round(distSeg),
+      durationHours: tSeg,
+      speedKmh: SPEEDS.plane,
+      label: `Cargo Flight (Leg ${i + 1})`,
+      icon: '✈️',
+    });
+
+    transitStops.push({
+      name: stop.name,
+      coords: [stop.lng, stop.lat],
+      type: 'transit_airport',
+      waitHours: WAIT.transitBreak,
+      label: `Transit Stop: ${stop.name}`,
+      icon: '✈️',
+    });
+
+    totalFlightHours += tSeg + WAIT.transitBreak;
+    currentLat = stop.lat;
+    currentLng = stop.lng;
+    currentName = stop.name;
+  }
+
+  // Final air segment: last stop to destination airport
+  const finalFlightKm = haversineKm(currentLat, currentLng, dAirport.lat, dAirport.lng);
+  const finalFlightHours = finalFlightKm / SPEEDS.plane;
+  const finalArcCoords = greatCircleArc(
+    { lat: currentLat, lng: currentLng },
+    { lat: dAirport.lat, lng: dAirport.lng },
+    120
+  );
+
+  segments.push({
+    mode: 'air',
+    coordinates: finalArcCoords,
+    from: { lat: currentLat, lng: currentLng, name: currentName },
+    to: { lat: dAirport.lat, lng: dAirport.lng, name: dAirport.name },
+    distanceKm: Math.round(finalFlightKm),
+    durationHours: finalFlightHours,
+    speedKmh: SPEEDS.plane,
+    label: customStops.length > 0 ? 'Cargo Flight (Final Leg)' : 'Cargo Flight',
+    icon: '✈️',
+  });
+
+  totalFlightHours += finalFlightHours;
+
+  // Customs at destination airport
+  transitStops.push({
+    name: dAirport.name,
+    coords: [dAirport.lng, dAirport.lat],
+    type: 'airport',
+    waitHours: WAIT.airportArrival,
+    label: 'Customs & Cargo Unloading',
+    icon: '🛬',
+  });
+
+  // Leg 3: Road — Destination Airport to Destination
+  const leg3Road = await getMapboxRoute(dAirport.lng, dAirport.lat, destLng, destLat, token);
+  segments.push({
+    mode: 'road',
+    coordinates: leg3Road.coordinates,
+    from: { lat: dAirport.lat, lng: dAirport.lng, name: dAirport.name },
+    to: { lat: destLat, lng: destLng, name: 'Destination' },
+    distanceKm: Math.round(leg3Road.distanceKm),
+    durationHours: leg3Road.durationHours,
+    speedKmh: SPEEDS.truck,
+    label: 'Last-Mile Delivery',
+    icon: '🚛',
+  });
+
+  // Total Duration
+  const totalHours =
+    leg1Road.durationHours + WAIT.airportBoarding +
+    totalFlightHours + WAIT.airportArrival +
+    leg3Road.durationHours;
+
+  // Concatenate all coordinates into single list for legacy route_data
+  const allCoords = [];
+  for (const seg of segments) {
+    allCoords.push(...seg.coordinates);
+  }
+  const routeData = { type: 'LineString', coordinates: allCoords };
+
+  // Calculate new ETA
+  const departedAt = shipment.departed_at || new Date().toISOString();
+  const totalPausedMs = parseInt(shipment.total_paused_ms) || 0;
+  const newEtaMs = new Date(departedAt).getTime() + (totalHours * 3600 * 1000) + totalPausedMs;
+  const newEstimatedDelivery = new Date(newEtaMs).toISOString();
+
+  const totalDistance = Math.round(
+    segments.reduce((acc, seg) => acc + seg.distanceKm, 0)
+  );
+
+  return {
+    route_data: routeData,
+    multi_modal_segments: segments,
+    multi_modal_stops: transitStops,
+    route_duration: totalHours * 3600,
+    route_distance: totalDistance * 1000,
+    estimated_delivery: newEstimatedDelivery,
+  };
+}
+
+// POST /api/shipments/:id/transit-stop — Add a new transit stop mid-flight
+router.post('/:id/transit-stop', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM shipments WHERE id::text = $1 OR tracking_id = $1', [req.params.id]);
+    const shipment = rows[0];
+    if (!shipment) return res.status(404).json({ error: 'Shipment not found.' });
+
+    // Validate only air cargo is supported
+    let cargoModes = shipment.transport_modes;
+    if (typeof cargoModes === 'string') { try { cargoModes = JSON.parse(cargoModes); } catch (e) {} }
+    const isAir = Array.isArray(cargoModes) && cargoModes.some(m => String(m).toLowerCase().includes('plan') || String(m).toLowerCase().includes('flight') || String(m).toLowerCase().includes('air'));
+    if (!isAir && shipment.cargo_type !== 'Live Animals') {
+      // Allow if it's air plan
+    }
+
+    const { airport_name, lat, lng, reason } = req.body;
+    if (!airport_name || lat === undefined || lng === undefined) {
+      return res.status(400).json({ error: 'airport_name, lat, and lng are required.' });
+    }
+
+    // Get current custom stops
+    let stops = shipment.scheduled_transit_stops;
+    if (typeof stops === 'string') { try { stops = JSON.parse(stops); } catch (e) {} }
+    if (!Array.isArray(stops)) stops = [];
+
+    // Add new stop
+    const newStop = { name: airport_name, lat: parseFloat(lat), lng: parseFloat(lng), added_at: new Date().toISOString() };
+    stops.push(newStop);
+
+    // Recalculate route segments & ETA
+    const newRoute = await rebuildShipmentAirRoute(shipment, stops);
+
+    // Update DB
+    await pool.query(`
+      UPDATE shipments
+      SET scheduled_transit_stops = $1,
+          route_data = $2,
+          multi_modal_segments = $3,
+          multi_modal_stops = $4,
+          route_duration = $5,
+          route_distance = $6,
+          estimated_delivery = $7
+      WHERE id = $8
+    `, [
+      JSON.stringify(stops),
+      JSON.stringify(newRoute.route_data),
+      JSON.stringify(newRoute.multi_modal_segments),
+      JSON.stringify(newRoute.multi_modal_stops),
+      newRoute.route_duration,
+      newRoute.route_distance,
+      newRoute.estimated_delivery,
+      shipment.id
+    ]);
+
+    // Tracking History log
+    const note = `Added scheduled transit stop at ${airport_name}` + (reason ? `: ${reason}` : '');
+    await pool.query(
+      'INSERT INTO tracking_history (shipment_id, tracking_id, status, notes, updated_by) VALUES ($1, $2, $3, $4, $5)',
+      [shipment.id, shipment.tracking_id, shipment.status, note, req.user.username || req.user.email || 'admin']
+    );
+
+    const { rows: updated } = await pool.query('SELECT * FROM shipments WHERE id = $1', [shipment.id]);
+    res.json({ shipment: enrichShipment(updated[0]) });
+
+  } catch (err) {
+    console.error('Add transit stop error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// DELETE /api/shipments/:id/transit-stop/:index — Remove scheduled transit stop
+router.delete('/:id/transit-stop/:index', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM shipments WHERE id::text = $1 OR tracking_id = $1', [req.params.id]);
+    const shipment = rows[0];
+    if (!shipment) return res.status(404).json({ error: 'Shipment not found.' });
+
+    const idx = parseInt(req.params.index);
+    let stops = shipment.scheduled_transit_stops;
+    if (typeof stops === 'string') { try { stops = JSON.parse(stops); } catch (e) {} }
+    if (!Array.isArray(stops) || idx < 0 || idx >= stops.length) {
+      return res.status(400).json({ error: 'Invalid stop index.' });
+    }
+
+    const removedName = stops[idx].name;
+    stops.splice(idx, 1);
+
+    // Recalculate route segments & ETA
+    const newRoute = await rebuildShipmentAirRoute(shipment, stops);
+
+    // Update DB
+    await pool.query(`
+      UPDATE shipments
+      SET scheduled_transit_stops = $1,
+          route_data = $2,
+          multi_modal_segments = $3,
+          multi_modal_stops = $4,
+          route_duration = $5,
+          route_distance = $6,
+          estimated_delivery = $7
+      WHERE id = $8
+    `, [
+      JSON.stringify(stops),
+      JSON.stringify(newRoute.route_data),
+      JSON.stringify(newRoute.multi_modal_segments),
+      JSON.stringify(newRoute.multi_modal_stops),
+      newRoute.route_duration,
+      newRoute.route_distance,
+      newRoute.estimated_delivery,
+      shipment.id
+    ]);
+
+    // Tracking History log
+    const note = `Removed scheduled transit stop at ${removedName}`;
+    await pool.query(
+      'INSERT INTO tracking_history (shipment_id, tracking_id, status, notes, updated_by) VALUES ($1, $2, $3, $4, $5)',
+      [shipment.id, shipment.tracking_id, shipment.status, note, req.user.username || req.user.email || 'admin']
+    );
+
+    const { rows: updated } = await pool.query('SELECT * FROM shipments WHERE id = $1', [shipment.id]);
+    res.json({ shipment: enrichShipment(updated[0]) });
+
+  } catch (err) {
+    console.error('Delete transit stop error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// POST /api/shipments/:id/transit-land — Immediately trigger transit landing / pause
+router.post('/:id/transit-land', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM shipments WHERE id::text = $1 OR tracking_id = $1', [req.params.id]);
+    const shipment = rows[0];
+    if (!shipment) return res.status(404).json({ error: 'Shipment not found.' });
+
+    const { airport_name, reason } = req.body;
+    if (!airport_name) {
+      return res.status(400).json({ error: 'airport_name is required.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const frozenProgress = computeProgress(shipment);
+
+    // Pause shipment with category 'Transit Stop' and reason
+    const newStatus = 'paused';
+    const pauseCategory = 'Transit Stop';
+    const pauseReason = reason || `Layover at ${airport_name}`;
+    const action = `Landed at transit stop: ${airport_name}`;
+
+    await pool.query(`
+      UPDATE shipments
+      SET is_paused = TRUE,
+          status = $1,
+          paused_at = $2,
+          pause_category = $3,
+          pause_reason = $4,
+          progress = $5
+      WHERE id = $6
+    `, [newStatus, nowIso, pauseCategory, pauseReason, frozenProgress, shipment.id]);
+
+    // Tracking History
+    await pool.query(
+      'INSERT INTO tracking_history (shipment_id, tracking_id, status, location, notes, updated_by) VALUES ($1, $2, $3, $4, $5, $6)',
+      [shipment.id, shipment.tracking_id, newStatus, airport_name, action, req.user.username || req.user.email || 'admin']
+    );
+
+    // Notification
+    await pool.query('INSERT INTO notifications (title, message, type) VALUES ($1, $2, $3)', [
+      'Transit Stop Landing',
+      `${shipment.tracking_id} landed at ${airport_name} for transit stop.`,
+      'warning'
+    ]);
+
+    // Send emails to sender & receiver
+    try {
+      const recipients = [];
+      if (shipment.sender_email) recipients.push({ email: shipment.sender_email, name: shipment.sender_name });
+      if (shipment.receiver_email && shipment.receiver_email !== shipment.sender_email) recipients.push({ email: shipment.receiver_email, name: shipment.receiver_name });
+
+      const emailPromises = recipients.map(async r => {
+        const emailData = buildShipmentPauseEmail({
+          shipment,
+          isPaused: true,
+          pauseCategory: pauseCategory,
+          pauseReason: pauseReason,
+          location: airport_name,
+          pausedAt: nowIso,
+        });
+        const result = await sendMail({ to: r.email, subject: emailData.subject, html: emailData.html, text: emailData.text });
+        if (result.success) {
+          await pool.query(
+            `INSERT INTO email_drafts (type, recipient_email, recipient_name, subject, html_body, text_body, status, related_tracking_id, sent_at)
+             VALUES ($1, $2, $3, $4, $5, $6, 'sent', $7, NOW())`,
+            ['tracking_update', r.email, r.name, emailData.subject, emailData.html, emailData.text, shipment.tracking_id]
+          );
+        }
+        return result;
+      });
+      await Promise.allSettled(emailPromises);
+    } catch (emailErr) {
+      console.error('Transit landing email error:', emailErr.message);
+    }
+
+    // Create tracking update drafts for subscribers
+    if (createTrackingUpdateDraft) {
+      try {
+        await createTrackingUpdateDraft({
+          trackingId: shipment.tracking_id,
+          status: newStatus,
+          statusLabel: 'Transit Stop',
+          location: airport_name,
+          notes: action,
+          pauseCategory: pauseCategory,
+          pauseReason: pauseReason,
+        });
+      } catch (err) {
+        console.error('Tracking draft error:', err.message);
+      }
+    }
+
+    const { rows: updated } = await pool.query('SELECT * FROM shipments WHERE id = $1', [shipment.id]);
+    res.json({ shipment: enrichShipment(updated[0]) });
+
+  } catch (err) {
+    console.error('Transit landing error:', err);
     res.status(500).json({ error: 'Internal server error.' });
   }
 });

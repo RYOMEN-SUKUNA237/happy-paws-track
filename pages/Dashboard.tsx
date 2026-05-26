@@ -109,6 +109,11 @@ const Dashboard: React.FC = () => {
         pauseReason: s.pause_reason || undefined,
         lat: s.current_lat || s.dest_lat,
         lng: s.current_lng || s.dest_lng,
+        route_data: s.route_data,
+        transport_modes: s.transport_modes,
+        scheduled_transit_stops: s.scheduled_transit_stops,
+        multi_modal_stops: s.multi_modal_stops,
+        multi_modal_segments: s.multi_modal_segments,
       })));
     } catch (err) {
       console.error('Failed to fetch data:', err);

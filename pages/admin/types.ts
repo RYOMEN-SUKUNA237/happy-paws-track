@@ -34,6 +34,9 @@ export interface Shipment {
   pauseReason?: string;
   lat?: number;
   lng?: number;
+  scheduled_transit_stops?: Array<{ name: string; lat: number; lng: number; added_at?: string }>;
+  multi_modal_stops?: Array<{ name: string; coords: [number, number]; type: string; label: string; icon: string }>;
+  multi_modal_segments?: Array<any>;
 }
 
 export type AdminPage = 'overview' | 'couriers' | 'customers' | 'shipments' | 'track-map' | 'messages' | 'quotes' | 'reviews' | 'emails' | 'settings';
