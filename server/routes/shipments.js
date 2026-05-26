@@ -4,7 +4,7 @@ const { authMiddleware } = require('../middleware/auth');
 const { generateTrackingId } = require('../utils/generators');
 const { sendMail, buildShipmentCreationEmail, buildShipmentPauseEmail, buildShipmentStatusChangeEmail } = require('../utils/mailer');
 const { findNearestHub } = require('../utils/hubLoader');
-const { haversineKm, greatCircleArc, getMapboxRoute } = require('../utils/routingHelper');
+const { haversineKm, greatCircleArc, straightLine, getMapboxRoute } = require('../utils/routingHelper');
 let createTrackingUpdateDraft;
 try {
   createTrackingUpdateDraft = require('./emails').createTrackingUpdateDraft;
@@ -918,7 +918,7 @@ async function rebuildShipmentAirRoute(shipment, customStops) {
     const stop = customStops[i];
     const distSeg = haversineKm(currentLat, currentLng, stop.lat, stop.lng);
     const tSeg = distSeg / SPEEDS.plane;
-    const arcCoords = greatCircleArc(
+    const arcCoords = straightLine(
       { lat: currentLat, lng: currentLng },
       { lat: stop.lat, lng: stop.lng },
       120
@@ -954,7 +954,7 @@ async function rebuildShipmentAirRoute(shipment, customStops) {
   // Final air segment: last stop to destination airport
   const finalFlightKm = haversineKm(currentLat, currentLng, dAirport.lat, dAirport.lng);
   const finalFlightHours = finalFlightKm / SPEEDS.plane;
-  const finalArcCoords = greatCircleArc(
+  const finalArcCoords = straightLine(
     { lat: currentLat, lng: currentLng },
     { lat: dAirport.lat, lng: dAirport.lng },
     120

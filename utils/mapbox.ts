@@ -179,6 +179,22 @@ export function determineTransportModes(distance: number, cargoType: string): st
   return modes;
 }
 
+export function generateStraightLine(
+  origin: [number, number],
+  destination: [number, number],
+  numPoints: number = 100
+): [number, number][] {
+  const points: [number, number][] = [];
+  for (let i = 0; i <= numPoints; i++) {
+    const f = i / numPoints;
+    points.push([
+      origin[0] + (destination[0] - origin[0]) * f,
+      origin[1] + (destination[1] - origin[1]) * f
+    ]);
+  }
+  return points;
+}
+
 // ─── GREAT CIRCLE ARC ────────────────────────────────────────────────
 // For air/sea routes where road directions aren't available
 export function generateGreatCircleArc(
@@ -340,7 +356,7 @@ export function computeTimeBasedProgress(s: ShipmentTimeData): number {
   if (s.status === 'delivered' || s.status === 'returned') return 100;
   if (s.status === 'pending') return 0;
   // Paused: frozen snapshot — never let it tick forward
-  if (s.is_paused) return s.computed_progress ?? s.progress ?? 0;
+  if (s.is_paused || (s as any).isPaused) return s.computed_progress ?? s.progress ?? 0;
   if (!s.departed_at || !s.estimated_delivery) return s.computed_progress ?? s.progress ?? 0;
 
   const departedMs  = new Date(s.departed_at).getTime();
@@ -567,7 +583,7 @@ export async function fetchWeather(lat: number, lng: number): Promise<WeatherDat
 
 export const ROUTE_STYLES = {
   road: { color: '#0a192f', width: 5, dasharray: [1], opacity: 0.85 },
-  air:  { color: '#06b6d4', width: 4, dasharray: [8, 6], opacity: 0.9 },
+  air:  { color: '#ec4899', width: 5, dasharray: [8, 5], opacity: 0.95 },
   sea:  { color: '#3b82f6', width: 4, dasharray: [4, 4], opacity: 0.85 },
 };
 

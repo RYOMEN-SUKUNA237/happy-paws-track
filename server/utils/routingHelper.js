@@ -72,4 +72,16 @@ async function getMapboxRoute(fromLng, fromLat, toLng, toLat, token) {
   };
 }
 
-module.exports = { haversineKm, greatCircleArc, getMapboxRoute };
+function straightLine(from, to, numPoints = 120) {
+  const pts = [];
+  for (let i = 0; i <= numPoints; i++) {
+    const f = i / numPoints;
+    pts.push([
+      from.lng + (to.lng - from.lng) * f,
+      from.lat + (to.lat - from.lat) * f
+    ]);
+  }
+  return pts;
+}
+
+module.exports = { haversineKm, greatCircleArc, straightLine, getMapboxRoute };

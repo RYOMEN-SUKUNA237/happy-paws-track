@@ -155,6 +155,29 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
     ['route-air','route-sea','route-road','route-glow','route-single'].forEach(id => { try { m.removeLayer(id); } catch {} });
     ['src-air','src-sea','src-road','src-single'].forEach(id => { try { m.removeSource(id); } catch {} });
 
+    // Clean up dynamic multimodal segment layers and sources
+    try {
+      const style = m.getStyle();
+      if (style) {
+        if (style.layers) {
+          style.layers.forEach(ly => {
+            if (ly.id.startsWith('route-seg-')) {
+              try { m.removeLayer(ly.id); } catch {}
+            }
+          });
+        }
+        if (style.sources) {
+          Object.keys(style.sources).forEach(srcId => {
+            if (srcId.startsWith('src-seg-')) {
+              try { m.removeSource(srcId); } catch {}
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Error clearing dynamic segments:', err);
+    }
+
     if (!selectedFull) return;
     const s = selectedFull;
     const segments: RouteSegment[] | null = s.multi_modal_segments;

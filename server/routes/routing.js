@@ -58,6 +58,18 @@ function greatCircleArc(from, to, numPoints = 120) {
   return pts;
 }
 
+function straightLine(from, to, numPoints = 120) {
+  const pts = [];
+  for (let i = 0; i <= numPoints; i++) {
+    const f = i / numPoints;
+    pts.push([
+      from.lng + (to.lng - from.lng) * f,
+      from.lat + (to.lat - from.lat) * f
+    ]);
+  }
+  return pts;
+}
+
 // ─── Mapbox Directions Proxy (called from server to avoid CORS issues) ────────
 async function getMapboxRoute(fromLng, fromLat, toLng, toLat, token) {
   if (!token) return null;
@@ -200,7 +212,7 @@ router.post('/plan', async (req, res) => {
       // Leg 2: Air — Airport A → Airport B (Great Circle)
       const flightKm = haversineKm(oAirport.lat, oAirport.lng, dAirport.lat, dAirport.lng);
       const flightHours = flightKm / SPEEDS.plane;
-      const arcCoords = greatCircleArc(
+      const arcCoords = straightLine(
         { lat: oAirport.lat, lng: oAirport.lng },
         { lat: dAirport.lat, lng: dAirport.lng },
         150

@@ -1,4 +1,4 @@
-import { MAPBOX_TOKEN, getTrueRoute, generateGreatCircleArc } from './mapbox';
+import { MAPBOX_TOKEN, getTrueRoute, generateGreatCircleArc, generateStraightLine } from './mapbox';
 
 // ─── FETCH WITH TIMEOUT ─────────────────────────────────────────────
 // Abort any fetch that takes longer than `ms` milliseconds so the
@@ -381,7 +381,7 @@ export async function buildTransportPlans(
         const stop = customTransitStops[i];
         const distSeg = haversineKm(currentCoords, stop.coords);
         const tSeg = distSeg / SPEEDS.plane;
-        const arc = generateGreatCircleArc(currentCoords, stop.coords, 120);
+        const arc = generateStraightLine(currentCoords, stop.coords, 120);
 
         segments.push({
           mode: 'air',
@@ -423,7 +423,7 @@ export async function buildTransportPlans(
       // Final flight segment: last stop to destination airport
       const finalFlightKm = haversineKm(currentCoords, dAirport.coords);
       const finalFlightHours = finalFlightKm / SPEEDS.plane;
-      const finalArcCoords = generateGreatCircleArc(currentCoords, dAirport.coords, 120);
+      const finalArcCoords = generateStraightLine(currentCoords, dAirport.coords, 120);
 
       segments.push({
         mode: 'air',
@@ -460,7 +460,7 @@ export async function buildTransportPlans(
         const tFlight2 = dFlight2 / SPEEDS.plane;
 
         // Flight leg 1
-        const arc1 = generateGreatCircleArc(oAirport.coords, transitAirport.coords, 120);
+        const arc1 = generateStraightLine(oAirport.coords, transitAirport.coords, 120);
         segments.push({
           mode: 'air', coordinates: arc1,
           from: { name: oAirport.name, coords: oAirport.coords },
@@ -478,7 +478,7 @@ export async function buildTransportPlans(
         });
 
         // Flight leg 2
-        const arc2 = generateGreatCircleArc(transitAirport.coords, dAirport.coords, 120);
+        const arc2 = generateStraightLine(transitAirport.coords, dAirport.coords, 120);
         segments.push({
           mode: 'air', coordinates: arc2,
           from: { name: transitAirport.name, coords: transitAirport.coords },
@@ -491,7 +491,7 @@ export async function buildTransportPlans(
         totalFlightHours = tFlight1 + TRANSFER.transitBreak + tFlight2;
       } else {
         // No transit found — direct long flight
-        const arc = generateGreatCircleArc(oAirport.coords, dAirport.coords, 150);
+        const arc = generateStraightLine(oAirport.coords, dAirport.coords, 150);
         const tFlight = dFlight / SPEEDS.plane;
         segments.push({
           mode: 'air', coordinates: arc,
@@ -505,7 +505,7 @@ export async function buildTransportPlans(
       }
     } else {
       // Direct flight (< 48h)
-      const arc = generateGreatCircleArc(oAirport.coords, dAirport.coords, 150);
+      const arc = generateStraightLine(oAirport.coords, dAirport.coords, 150);
       const tFlight = dFlight / SPEEDS.plane;
       segments.push({
         mode: 'air', coordinates: arc,
