@@ -456,18 +456,30 @@ export function interpolateMultiModal(
   let totalH = 0;
 
   for (let i = 0; i < segments.length; i++) {
-    slices.push({ type: 'segment', index: i, durationHours: segments[i].durationHours, startFraction: 0, endFraction: 0 });
-    totalH += segments[i].durationHours;
+    // Guard: coerce to number — DB may return strings
+    const segDur = Number(segments[i].durationHours) || 0;
+    slices.push({ type: 'segment', index: i, durationHours: segDur, startFraction: 0, endFraction: 0 });
+    totalH += segDur;
 
     // Add transit stop after this segment if one exists at the segment's destination
+    // Use optional chaining — segments[i].to may be undefined for malformed DB data
     const stop = transitStops.find(ts =>
-      Math.abs(ts.coords[0] - segments[i].to.coords[0]) < 0.1 &&
-      Math.abs(ts.coords[1] - segments[i].to.coords[1]) < 0.1
+      Math.abs(Number(ts.coords[0]) - Number(segments[i].to?.coords?.[0] ?? 0)) < 0.1 &&
+      Math.abs(Number(ts.coords[1]) - Number(segments[i].to?.coords?.[1] ?? 0)) < 0.1
     );
     if (stop) {
-      slices.push({ type: 'transit', index: transitStops.indexOf(stop), durationHours: stop.waitHours, startFraction: 0, endFraction: 0 });
-      totalH += stop.waitHours;
+      const waitDur = Number(stop.waitHours) || 0;
+      slices.push({ type: 'transit', index: transitStops.indexOf(stop), durationHours: waitDur, startFraction: 0, endFraction: 0 });
+      totalH += waitDur;
     }
+  }
+
+  // Guard against division by zero — fallback to simple first-segment interpolation
+  if (totalH <= 0) {
+    const seg = segments[0];
+    if (!seg?.coordinates?.length) return { position: [0, 0], progress: 0, currentSegmentIndex: 0, currentMode: 'road', currentLabel: '', segmentProgress: 0, speedKmh: 0 };
+    const pos = interpolateAlongRoute(seg.coordinates, clampedProgress);
+    return { position: pos, progress: clampedProgress, currentSegmentIndex: 0, currentMode: seg.mode, currentLabel: `${seg.icon} ${seg.label}`, segmentProgress: clampedProgress, speedKmh: seg.speedKmh };
   }
 
   // Calculate fraction ranges
@@ -492,11 +504,11 @@ export function interpolateMultiModal(
   if (activeSlice.type === 'transit') {
     const stop = transitStops[activeSlice.index];
     return {
-      position: stop.coords,
+      position: stop.coords as [number, number],
       progress: clampedProgress,
       currentSegmentIndex: activeSlice.index,
       currentMode: 'transit',
-      currentLabel: `${stop.icon} ${stop.label}`,
+      currentLabel: `${stop.icon ?? '✈️'} ${stop.label ?? stop.name ?? 'Transit'}`,
       segmentProgress: 0,
       speedKmh: 0,
       transitStopName: stop.name,
@@ -505,21 +517,25 @@ export function interpolateMultiModal(
 
   // We're in a segment — interpolate within it
   const seg = segments[activeSlice.index];
+  if (!seg) {
+    return { position: [0, 0], progress: clampedProgress, currentSegmentIndex: 0, currentMode: 'road', currentLabel: '', segmentProgress: 0, speedKmh: 0 };
+  }
   const sliceRange = activeSlice.endFraction - activeSlice.startFraction;
   const segProgress = sliceRange > 0
     ? ((progressFraction - activeSlice.startFraction) / sliceRange) * 100
     : 0;
 
-  const pos = interpolateAlongRoute(seg.coordinates, segProgress);
+  // Guard: seg.coordinates may be missing for malformed DB segment data
+  const pos = interpolateAlongRoute(seg.coordinates ?? [], segProgress);
 
   return {
     position: pos,
     progress: clampedProgress,
     currentSegmentIndex: activeSlice.index,
-    currentMode: seg.mode,
-    currentLabel: `${seg.icon} ${seg.label}`,
+    currentMode: seg.mode ?? 'road',
+    currentLabel: `${seg.icon ?? ''} ${seg.label ?? ''}`.trim(),
     segmentProgress: Math.round(segProgress * 10) / 10,
-    speedKmh: seg.speedKmh,
+    speedKmh: Number(seg.speedKmh) || 0,
   };
 }
 
