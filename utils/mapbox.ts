@@ -3,6 +3,22 @@ import along from '@turf/along';
 import length from '@turf/length';
 import { lineString } from '@turf/helpers';
 
+// ─── SHARED FETCH TIMEOUT HELPER ────────────────────────────────────────
+// Ensures all Mapbox API calls time out after ms milliseconds so the
+// UI never hangs with an infinite loading spinner.
+async function fetchWithTimeout(url: string, ms = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
 declare const __MAPBOX_TOKEN__: string;
 export const MAPBOX_TOKEN =
   (typeof __MAPBOX_TOKEN__ !== 'undefined' && __MAPBOX_TOKEN__)
@@ -18,7 +34,7 @@ export function initMapbox() {
 export async function geocodeAddress(query: string): Promise<{ lng: number; lat: number; place_name: string } | null> {
   if (!MAPBOX_TOKEN) return null;
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${MAPBOX_TOKEN}&limit=1`
     );
     const data = await res.json();
@@ -35,7 +51,7 @@ export async function geocodeAddress(query: string): Promise<{ lng: number; lat:
 export async function geocodeSearch(query: string): Promise<Array<{ lng: number; lat: number; place_name: string }>> {
   if (!MAPBOX_TOKEN) return [];
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${MAPBOX_TOKEN}&limit=5`
     );
     const data = await res.json();
@@ -85,7 +101,7 @@ export async function getTrueRoute(
       `${startCoords[0]},${startCoords[1]};${endCoords[0]},${endCoords[1]}` +
       `?geometries=geojson&overview=full&steps=true&access_token=${MAPBOX_TOKEN}`;
 
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, 10000);
     const data = await res.json();
 
     if (data.routes && data.routes.length > 0) {

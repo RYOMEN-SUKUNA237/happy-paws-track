@@ -1,5 +1,21 @@
 import { MAPBOX_TOKEN, getTrueRoute, generateGreatCircleArc } from './mapbox';
 
+// ─── FETCH WITH TIMEOUT ─────────────────────────────────────────────
+// Abort any fetch that takes longer than `ms` milliseconds so the
+// transport planner never hangs the UI indefinitely.
+async function fetchWithTimeout(url: string, ms = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
 // ─── REALISTIC TRANSPORT SPEEDS ─────────────────────────────────────
 const SPEEDS = {
   localTruck: 50,    // km/h — city pickup/delivery
@@ -115,7 +131,7 @@ async function getRoadCoordinates(
       };
     }
   } catch (e) {
-    console.error('Road route fetch error:', e);
+    // Road route failed or timed out — use straight-line fallback
   }
   // Fallback to straight line with haversine distance
   const dist = haversineKm(from, to);
@@ -126,6 +142,16 @@ async function getRoadCoordinates(
  * Find the nearest REAL airport or seaport using the backend CSV datasets.
  * Falls back to Mapbox geocoding only if the backend is unavailable.
  */
+/** Detect the backend API base URL at runtime */
+function getBackendUrl(): string {
+  if (typeof window === 'undefined') return 'http://localhost:5000';
+  const { protocol, hostname, port } = window.location;
+  // In dev, Vite typically runs on 5173 and the server on 5000.
+  // If we're already on port 5000, use same origin; otherwise hardcode 5000.
+  const serverPort = port === '5000' ? '' : ':5000';
+  return `${protocol}//${hostname}${serverPort}`;
+}
+
 export async function findNearestHub(
   coords: [number, number],
   type: 'airport' | 'port'
@@ -135,13 +161,10 @@ export async function findNearestHub(
 
   // ── Try local backend API first (uses CSV datasets) ──────────────────────
   try {
-    const backendUrl =
-      typeof window !== 'undefined'
-        ? `${(window as any).location.protocol}//${(window as any).location.hostname}:5000`
-        : 'http://localhost:5000';
-
-    const res = await fetch(
-      `${backendUrl}/api/routing/nearest-hub?lat=${lat}&lng=${lng}&type=${hubType}&limit=1`
+    const backendUrl = getBackendUrl();
+    const res = await fetchWithTimeout(
+      `${backendUrl}/api/routing/nearest-hub?lat=${lat}&lng=${lng}&type=${hubType}&limit=1`,
+      6000  // 6 second timeout for backend hub lookup
     );
 
     if (res.ok) {
@@ -155,7 +178,7 @@ export async function findNearestHub(
       }
     }
   } catch (_e) {
-    // Backend unavailable — fall through to Mapbox geocoding
+    // Backend unavailable or timed out — fall through to Mapbox geocoding
   }
 
   // ── Fallback: Mapbox geocoding (legacy behavior) ──────────────────────────
@@ -169,7 +192,7 @@ export async function findNearestHub(
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json` +
       `?proximity=${lng},${lat}&access_token=${MAPBOX_TOKEN}&limit=5&types=poi`;
 
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, 8000);
     const data = await res.json();
 
     if (data.features && data.features.length > 0) {
@@ -191,7 +214,7 @@ export async function findNearestHub(
       return { name: shortName, coords: best.center as [number, number] };
     }
   } catch (e) {
-    console.error('Hub lookup error:', e);
+    // Hub geocoding failed or timed out
   }
   return null;
 }
@@ -216,7 +239,7 @@ async function findTransitAirport(
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent('international airport')}.json` +
       `?proximity=${midLng},${midLat}&access_token=${MAPBOX_TOKEN}&limit=5&types=poi`;
 
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, 8000);
     const data = await res.json();
 
     if (data.features && data.features.length > 0) {
@@ -239,7 +262,7 @@ async function findTransitAirport(
       }
     }
   } catch (e) {
-    console.error('Transit airport lookup error:', e);
+    // Transit airport lookup timed out or failed — skip transit stop
   }
   return null;
 }

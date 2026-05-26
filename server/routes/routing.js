@@ -65,7 +65,17 @@ async function getMapboxRoute(fromLng, fromLat, toLng, toLat, token) {
     const url = `https://api.mapbox.com/directions/v5/mapbox/driving/` +
       `${fromLng},${fromLat};${toLng},${toLat}` +
       `?geometries=geojson&overview=full&access_token=${token}`;
-    const res = await fetch(url);
+
+    // Abort the request if Mapbox doesn't respond within 8 seconds
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let res;
+    try {
+      res = await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+
     const data = await res.json();
     if (data.routes && data.routes.length > 0) {
       const r = data.routes[0];

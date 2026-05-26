@@ -334,7 +334,13 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
     setPlanLoading(true);
     try {
       const [oGeo, dGeo] = await Promise.all([geocodeAddress(form.origin), geocodeAddress(form.destination)]);
-      if (!oGeo || !dGeo) { console.warn('Could not geocode addresses'); setPlanLoading(false); return; }
+      if (!oGeo || !dGeo) {
+        console.warn('Could not geocode addresses');
+        setAlterToast('⚠️ Could not locate one or both addresses. Please check and try again.');
+        setTimeout(() => setAlterToast(null), 4000);
+        setPlanLoading(false);
+        return;
+      }
 
       // Haversine straight-line distance (always works, even cross-ocean)
       const toRad = (d: number) => (d * Math.PI) / 180;
@@ -344,7 +350,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
       const a = Math.sin(dLat/2)**2 + Math.cos(toRad(oGeo.lat)) * Math.cos(toRad(dGeo.lat)) * Math.sin(dLon/2)**2;
       const haversineDist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 
-      // Try road route for duration estimate
+      // Try road route for duration estimate (has its own 10s timeout in mapbox.ts)
       const route = await getRoute([oGeo.lng, oGeo.lat], [dGeo.lng, dGeo.lat]);
 
       setRoutePreview({
@@ -354,8 +360,17 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
         summary: route?.summary || '',
       });
 
-      // Pass haversine as routeDistanceKm — the planner uses it to decide air/sea eligibility
-      const plans = await buildTransportPlans(form.origin, form.destination, [oGeo.lng, oGeo.lat], [dGeo.lng, dGeo.lat], haversineDist);
+      // Pass haversine as routeDistanceKm — the planner uses it to decide air/sea eligibility.
+      // Each individual fetch inside buildTransportPlans has its own 6-10s timeout.
+      // As a last-resort safety net, wrap the whole call in a 45s Promise.race so the
+      // spinner can NEVER get permanently stuck.
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Route planning timed out. Please try again.')), 45000)
+      );
+      const plans = await Promise.race([
+        buildTransportPlans(form.origin, form.destination, [oGeo.lng, oGeo.lat], [dGeo.lng, dGeo.lat], haversineDist),
+        timeoutPromise,
+      ]);
       setTransportPlans(plans);
       const rec = plans.find(p => p.isRecommended) || plans[0];
       if (rec) {
@@ -363,8 +378,12 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
         setForm(p => ({ ...p, estimatedDelivery: rec.estimatedDeliveryDate }));
       }
       setRouteAnalysed(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Preview route error:', err);
+      if (err?.message) {
+        setAlterToast('⚠️ ' + err.message);
+        setTimeout(() => setAlterToast(null), 5000);
+      }
     } finally {
       setPlanLoading(false);
     }
