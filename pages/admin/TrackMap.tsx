@@ -779,7 +779,7 @@ const TrackMap: React.FC<TrackMapProps> = ({ shipments, setShipments, onRefresh 
                                     className="w-full px-2.5 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
                                   />
                                   {stopSuggestions.length > 0 && (
-                                    <div className="absolute left-0 right-0 z-30 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg font-normal">
+                                    <div className="relative z-20 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-inner font-normal">
                                       {stopSuggestions.map((sug, idx) => (
                                         <button
                                           key={idx}

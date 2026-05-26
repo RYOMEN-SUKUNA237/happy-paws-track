@@ -143,14 +143,77 @@ function findNearestSeaports(lat, lng, limit = 1) {
  * @param {'airport'|'seaport'} type
  * @returns {{ name, lat, lng, distanceKm } | null}
  */
+const FALLBACK_AIRPORTS = [
+  { name: "John F. Kennedy International Airport (JFK)", lat: 40.6413, lng: -73.7781, iata: "JFK" },
+  { name: "Los Angeles International Airport (LAX)", lat: 33.9416, lng: -118.4085, iata: "LAX" },
+  { name: "London Heathrow Airport (LHR)", lat: 51.4700, lng: -0.4543, iata: "LHR" },
+  { name: "Paris Charles de Gaulle Airport (CDG)", lat: 49.0097, lng: 2.5500, iata: "CDG" },
+  { name: "Frankfurt Airport (FRA)", lat: 50.0379, lng: 8.5622, iata: "FRA" },
+  { name: "Dubai International Airport (DXB)", lat: 25.2532, lng: 55.3644, iata: "DXB" },
+  { name: "Singapore Changi Airport (SIN)", lat: 1.3644, lng: 103.9915, iata: "SIN" },
+  { name: "Tokyo Haneda Airport (HND)", lat: 35.5494, lng: 139.7798, iata: "HND" },
+  { name: "Sydney Kingsford Smith Airport (SYD)", lat: -33.9461, lng: 151.1772, iata: "SYD" },
+  { name: "Beijing Capital International Airport (PEK)", lat: 40.0799, lng: 116.5975, iata: "PEK" },
+  { name: "O'Hare International Airport (ORD)", lat: 41.9742, lng: -87.9073, iata: "ORD" },
+  { name: "Hartsfield-Jackson Atlanta International Airport (ATL)", lat: 33.6407, lng: -84.4277, iata: "ATL" },
+  { name: "Dallas/Fort Worth International Airport (DFW)", lat: 32.8998, lng: -97.0372, iata: "DFW" },
+  { name: "Denver International Airport (DEN)", lat: 39.8561, lng: -104.6737, iata: "DEN" },
+  { name: "San Francisco International Airport (SFO)", lat: 37.6190, lng: -122.3790, iata: "SFO" },
+  { name: "Toronto Pearson International Airport (YYZ)", lat: 43.6777, lng: -79.6248, iata: "YYZ" },
+  { name: "São Paulo/Guarulhos International Airport (GRU)", lat: -23.4356, lng: -46.4731, iata: "GRU" },
+  { name: "Johannesburg O.R. Tambo International Airport (JNB)", lat: -26.1367, lng: 28.2460, iata: "JNB" },
+  { name: "Cairo International Airport (CAI)", lat: 30.1219, lng: 31.4056, iata: "CAI" },
+  { name: "Incheon International Airport (ICN)", lat: 37.4602, lng: 126.4406, iata: "ICN" },
+  { name: "Hong Kong International Airport (HKG)", lat: 22.3080, lng: 113.9145, iata: "HKG" },
+  { name: "Mumbai Chhatrapati Shivaji Maharaj Airport (BOM)", lat: 19.0896, lng: 72.8656, iata: "BOM" },
+  { name: "Istanbul Airport (IST)", lat: 41.2599, lng: 28.7278, iata: "IST" },
+  { name: "Amsterdam Airport Schiphol (AMS)", lat: 52.3105, lng: 4.7683, iata: "AMS" },
+  { name: "Madrid-Barajas Airport (MAD)", lat: 40.4839, lng: -3.5672, iata: "MAD" },
+  { name: "Rome Fiumicino Airport (FCO)", lat: 41.8003, lng: 12.2389, iata: "FCO" },
+  { name: "Munich Airport (MUC)", lat: 48.3538, lng: 11.7861, iata: "MUC" },
+  { name: "Nairobi Jomo Kenyatta International Airport (NBO)", lat: -1.3192, lng: 36.9275, iata: "NBO" },
+  { name: "Lagos Murtala Muhammed International Airport (LOS)", lat: 6.5774, lng: 3.3210, iata: "LOS" },
+  { name: "Miami International Airport (MIA)", lat: 25.7959, lng: -80.2870, iata: "MIA" },
+];
+
+const FALLBACK_SEAPORTS = [
+  { name: "Port of Shanghai", lat: 31.1433, lng: 121.8053 },
+  { name: "Port of Singapore", lat: 1.2902, lng: 103.8519 },
+  { name: "Port of Rotterdam", lat: 51.9489, lng: 4.1489 },
+  { name: "Port of Los Angeles", lat: 33.7380, lng: -118.2618 },
+  { name: "Port of New York & New Jersey", lat: 40.6722, lng: -74.0722 },
+  { name: "Port of Tokyo", lat: 35.6179, lng: 139.7897 },
+  { name: "Port of Busan", lat: 35.1017, lng: 129.0403 },
+  { name: "Port of Jebel Ali (Dubai)", lat: 24.9857, lng: 55.0272 },
+  { name: "Port of Antwerp", lat: 51.3414, lng: 4.3414 },
+  { name: "Port of Hamburg", lat: 53.5350, lng: 9.9538 },
+  { name: "Port of Mumbai", lat: 18.9483, lng: 72.8466 },
+  { name: "Port of Sydney", lat: -33.8568, lng: 151.2464 },
+  { name: "Port of Rio de Janeiro", lat: -22.9009, lng: -43.1905 },
+  { name: "Port of Cape Town", lat: -33.9167, lng: 18.4339 },
+  { name: "Port of Mombasa", lat: -4.0435, lng: 39.6635 },
+];
+
 function findNearestHub(lat, lng, type) {
   if (type === 'airport') {
     const results = findNearestAirports(lat, lng, 1);
-    return results[0] || null;
+    if (results.length > 0) return results[0];
+    const scored = FALLBACK_AIRPORTS.map(a => ({
+      ...a,
+      distanceKm: haversineKm(lat, lng, a.lat, a.lng),
+    }));
+    scored.sort((a, b) => a.distanceKm - b.distanceKm);
+    return scored[0];
   }
   if (type === 'seaport') {
     const results = findNearestSeaports(lat, lng, 1);
-    return results[0] || null;
+    if (results.length > 0) return results[0];
+    const scored = FALLBACK_SEAPORTS.map(p => ({
+      ...p,
+      distanceKm: haversineKm(lat, lng, p.lat, p.lng),
+    }));
+    scored.sort((a, b) => a.distanceKm - b.distanceKm);
+    return scored[0];
   }
   return null;
 }

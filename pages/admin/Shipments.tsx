@@ -667,7 +667,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
               <h3 className="text-lg font-bold text-[#0a192f]">Create New Shipment</h3>
               <button onClick={() => setShowCreate(false)} className="p-1 hover:bg-gray-100 rounded-lg"><X size={20} className="text-gray-500" /></button>
             </div>
-            <div className="p-6 space-y-5">
+            <div className="p-6 pb-24 space-y-5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Sender Name *</label>
@@ -963,7 +963,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                               className="w-full px-3 py-1.5 border border-gray-200 rounded-lg text-xs outline-none focus:border-blue-500"
                             />
                             {stopSuggestions.length > 0 && (
-                              <div className="absolute z-50 left-0 right-0 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                              <div className="relative z-20 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-inner">
                                 {stopSuggestions.map((sug, idx) => (
                                   <button
                                     key={idx}
@@ -1011,7 +1011,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
               <h3 className="text-lg font-bold text-[#0a192f]">Shipment Details</h3>
               <button onClick={() => setSelectedShipment(null)} className="p-1 hover:bg-gray-100 rounded-lg"><X size={20} className="text-gray-500" /></button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-6 pb-24 space-y-4">
               <div className="bg-gray-50 p-4 rounded-lg">
                 <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Tracking ID</p>
                 <p className="text-xl font-mono font-bold text-[#0a192f]">{selectedShipment.trackingId}</p>
@@ -1128,7 +1128,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                             </div>
 
                             {suggestions.length > 0 && (
-                              <div className="absolute left-0 right-0 z-30 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                              <div className="relative z-20 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-inner">
                                 {suggestions.map((sug, idx) => (
                                   <div
                                     key={idx}
@@ -1243,7 +1243,7 @@ const Shipments: React.FC<ShipmentsProps> = ({ shipments, setShipments, couriers
                                     className="w-full px-2.5 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-sky-500"
                                   />
                                   {stopSuggestions.length > 0 && (
-                                    <div className="absolute left-0 right-0 z-30 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg">
+                                    <div className="relative z-20 mt-1 max-h-32 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-inner">
                                       {stopSuggestions.map((sug, idx) => (
                                         <button
                                           key={idx}

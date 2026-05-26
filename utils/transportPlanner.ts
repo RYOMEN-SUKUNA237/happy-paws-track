@@ -152,6 +152,57 @@ function getBackendUrl(): string {
   return `${protocol}//${hostname}${serverPort}`;
 }
 
+const FALLBACK_AIRPORTS = [
+  { name: "John F. Kennedy International Airport (JFK)", coords: [-73.7781, 40.6413] },
+  { name: "Los Angeles International Airport (LAX)", coords: [-118.4085, 33.9416] },
+  { name: "London Heathrow Airport (LHR)", coords: [-0.4543, 51.4700] },
+  { name: "Paris Charles de Gaulle Airport (CDG)", coords: [2.5500, 49.0097] },
+  { name: "Frankfurt Airport (FRA)", coords: [8.5622, 50.0379] },
+  { name: "Dubai International Airport (DXB)", coords: [55.3644, 25.2532] },
+  { name: "Singapore Changi Airport (SIN)", coords: [103.9915, 1.3644] },
+  { name: "Tokyo Haneda Airport (HND)", coords: [139.7798, 35.5494] },
+  { name: "Sydney Kingsford Smith Airport (SYD)", coords: [151.1772, -33.9461] },
+  { name: "Beijing Capital International Airport (PEK)", coords: [116.5975, 40.0799] },
+  { name: "O'Hare International Airport (ORD)", coords: [-87.9073, 41.9742] },
+  { name: "Hartsfield-Jackson Atlanta International Airport (ATL)", coords: [-84.4277, 33.6407] },
+  { name: "Dallas/Fort Worth International Airport (DFW)", coords: [-97.0372, 32.8998] },
+  { name: "Denver International Airport (DEN)", coords: [-104.6737, 39.8561] },
+  { name: "San Francisco International Airport (SFO)", coords: [-122.3790, 37.6190] },
+  { name: "Toronto Pearson International Airport (YYZ)", coords: [-79.6248, 43.6777] },
+  { name: "São Paulo/Guarulhos International Airport (GRU)", coords: [-46.4731, -23.4356] },
+  { name: "Johannesburg O.R. Tambo International Airport (JNB)", coords: [28.2460, -26.1367] },
+  { name: "Cairo International Airport (CAI)", coords: [31.4056, 30.1219] },
+  { name: "Incheon International Airport (ICN)", coords: [126.4406, 37.4602] },
+  { name: "Hong Kong International Airport (HKG)", coords: [113.9145, 22.3080] },
+  { name: "Mumbai Chhatrapati Shivaji Maharaj Airport (BOM)", coords: [72.8656, 19.0896] },
+  { name: "Istanbul Airport (IST)", coords: [28.7278, 41.2599] },
+  { name: "Amsterdam Airport Schiphol (AMS)", coords: [4.7683, 52.3105] },
+  { name: "Madrid-Barajas Airport (MAD)", coords: [-3.5672, 40.4839] },
+  { name: "Rome Fiumicino Airport (FCO)", coords: [12.2389, 41.8003] },
+  { name: "Munich Airport (MUC)", coords: [11.7861, 48.3538] },
+  { name: "Nairobi Jomo Kenyatta International Airport (NBO)", coords: [36.9275, -1.3192] },
+  { name: "Lagos Murtala Muhammed International Airport (LOS)", coords: [3.3210, 6.5774] },
+  { name: "Miami International Airport (MIA)", coords: [-80.2870, 25.7959] },
+];
+
+const FALLBACK_SEAPORTS = [
+  { name: "Port of Shanghai", coords: [121.8053, 31.1433] },
+  { name: "Port of Singapore", coords: [103.8519, 1.2902] },
+  { name: "Port of Rotterdam", coords: [4.1489, 51.9489] },
+  { name: "Port of Los Angeles", coords: [-118.2618, 33.7380] },
+  { name: "Port of New York & New Jersey", coords: [-74.0722, 40.6722] },
+  { name: "Port of Tokyo", coords: [139.7897, 35.6179] },
+  { name: "Port of Busan", coords: [129.0403, 35.1017] },
+  { name: "Port of Jebel Ali (Dubai)", coords: [55.0272, 24.9857] },
+  { name: "Port of Antwerp", coords: [4.3414, 51.3414] },
+  { name: "Port of Hamburg", coords: [9.9538, 53.5350] },
+  { name: "Port of Mumbai", coords: [72.8466, 18.9483] },
+  { name: "Port of Sydney", coords: [151.2464, -33.8568] },
+  { name: "Port of Rio de Janeiro", coords: [-43.1905, -22.9009] },
+  { name: "Port of Cape Town", coords: [18.4339, -33.9167] },
+  { name: "Port of Mombasa", coords: [39.6635, -4.0435] },
+];
+
 export async function findNearestHub(
   coords: [number, number],
   type: 'airport' | 'port'
@@ -181,42 +232,54 @@ export async function findNearestHub(
     // Backend unavailable or timed out — fall through to Mapbox geocoding
   }
 
-  // ── Fallback: Mapbox geocoding (legacy behavior) ──────────────────────────
-  if (!MAPBOX_TOKEN) return null;
-  try {
-    const query = type === 'airport'
-      ? 'international airport'
-      : 'seaport cargo port terminal';
+  // ── Fallback 1: Mapbox geocoding (legacy behavior) ──────────────────────────
+  if (MAPBOX_TOKEN) {
+    try {
+      const query = type === 'airport'
+        ? 'international airport'
+        : 'seaport cargo port terminal';
 
-    const url =
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json` +
-      `?proximity=${lng},${lat}&access_token=${MAPBOX_TOKEN}&limit=5&types=poi`;
+      const url =
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json` +
+        `?proximity=${lng},${lat}&access_token=${MAPBOX_TOKEN}&limit=5&types=poi`;
 
-    const res = await fetchWithTimeout(url, 8000);
-    const data = await res.json();
+      const res = await fetchWithTimeout(url, 8000);
+      const data = await res.json();
 
-    if (data.features && data.features.length > 0) {
-      const filtered = data.features.filter((f: any) => {
-        const name = (f.place_name || '').toLowerCase();
-        if (type === 'airport') {
-          return name.includes('airport') || name.includes('aeropuerto') ||
-            name.includes('aéroport') || name.includes('flughafen') ||
-            name.includes('aerodrome') || name.includes('aeroport');
-        } else {
-          return name.includes('port') || name.includes('terminal') ||
-            name.includes('harbour') || name.includes('harbor') ||
-            name.includes('dock') || name.includes('maritime');
+      if (data.features && data.features.length > 0) {
+        const filtered = data.features.filter((f: any) => {
+          const name = (f.place_name || '').toLowerCase();
+          if (type === 'airport') {
+            return name.includes('airport') || name.includes('aeropuerto') ||
+              name.includes('aéroport') || name.includes('flughafen') ||
+              name.includes('aerodrome') || name.includes('aeroport');
+          } else {
+            return name.includes('port') || name.includes('terminal') ||
+              name.includes('harbour') || name.includes('harbor') ||
+              name.includes('dock') || name.includes('maritime');
+          }
+        });
+
+        const best = filtered.length > 0 ? filtered[0] : data.features[0];
+        if (best) {
+          const shortName = best.place_name.split(',').slice(0, 2).join(',').trim();
+          return { name: shortName, coords: best.center as [number, number] };
         }
-      });
-
-      const best = filtered.length > 0 ? filtered[0] : data.features[0];
-      const shortName = best.place_name.split(',').slice(0, 2).join(',').trim();
-      return { name: shortName, coords: best.center as [number, number] };
+      }
+    } catch (e) {
+      // Hub geocoding failed or timed out
     }
-  } catch (e) {
-    // Hub geocoding failed or timed out
   }
-  return null;
+
+  // ── Fallback 2: Local list of major international hubs ──
+  const candidates = type === 'airport' ? FALLBACK_AIRPORTS : FALLBACK_SEAPORTS;
+  const scored = candidates.map(c => ({
+    ...c,
+    dist: haversineKm(coords, c.coords as [number, number])
+  }));
+  scored.sort((a, b) => a.dist - b.dist);
+  const best = scored[0];
+  return { name: best.name, coords: best.coords as [number, number] };
 }
 
 
