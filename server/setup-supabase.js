@@ -61,7 +61,7 @@ async function run() {
   // ─── 2. CREATE ADMIN USER IN SUPABASE AUTH ─────────────────────────
   console.log('\n─── Creating Admin User ───────────────────────────────');
 
-  const ADMIN_EMAIL = 'nexttracelogistics@gmail.com';
+  const ADMIN_EMAIL = 'support@nexttracelogistics.com';
   const ADMIN_PASSWORD = 'Black123$$roman'; // Change this after first login!
 
   // Check if user already exists

@@ -401,7 +401,7 @@ const Settings: React.FC = () => {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Business Email</label>
-                <input type="email" defaultValue="nexttracelogistics@gmail.com" className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none" />
+                <input type="email" defaultValue="support@nexttracelogistics.com" className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Business Phone</label>

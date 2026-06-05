@@ -768,7 +768,7 @@ const ContactSection: React.FC = () => (
                 </div>
                 <div>
                   <h4 className="font-semibold text-white text-sm">Email</h4>
-                  <p className="text-sm text-gray-400 mt-1">nexttracelogistics@gmail.com</p>
+                  <p className="text-sm text-gray-400 mt-1">support@nexttracelogistics.com</p>
                 </div>
               </div>
               <div className="flex items-start gap-4">

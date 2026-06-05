@@ -4,7 +4,7 @@
  * Imported by mailer.js — DO NOT rename without updating that import.
  */
 
-const COMPANY_EMAIL_REF = process.env.COMPANY_EMAIL || 'nexttracelogistics@gmail.com';
+const COMPANY_EMAIL_REF = process.env.COMPANY_EMAIL || 'support@nexttracelogistics.com';
 const COMPANY_PHONE_REF = '+1 (307) 200-8344';
 
 /**
