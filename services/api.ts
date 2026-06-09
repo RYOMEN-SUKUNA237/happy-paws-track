@@ -383,3 +383,25 @@ export const emails = {
 
 // ─── HEALTH ────────────────────────────────────────────────────────────
 export const health = () => fetch(`${API_BASE}/health`).then(r => r.json());
+
+// ─── SETTINGS ──────────────────────────────────────────────────────────
+export const settings = {
+  getCompany: (): Promise<{
+    company_name: string;
+    company_email: string;
+    company_phone: string;
+    company_address: string;
+    company_tax_id: string;
+    company_website: string;
+  }> => apiFetch('/settings/company'),
+
+  updateCompany: (data: {
+    company_name?: string;
+    company_email?: string;
+    company_phone?: string;
+    company_address?: string;
+    company_tax_id?: string;
+    company_website?: string;
+  }) => apiFetch('/settings/company', { method: 'PUT', body: JSON.stringify(data) }),
+};
+

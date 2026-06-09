@@ -15,6 +15,7 @@ const quoteRoutes = require('./routes/quotes');
 const reviewRoutes = require('./routes/reviews');
 const emailRoutes = require('./routes/emails');
 const routingRoutes = require('./routes/routing');
+const settingsRoutes = require('./routes/settings');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -86,6 +87,7 @@ app.use('/api/quotes', publicLimiter, quoteRoutes);
 app.use('/api/reviews', publicLimiter, reviewRoutes);
 app.use('/api/emails', emailRoutes);
 app.use('/api/routing', routingRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Root route — minimal, no API map exposed
 app.get('/', (req, res) => {

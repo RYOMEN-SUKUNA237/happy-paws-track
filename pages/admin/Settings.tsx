@@ -140,9 +140,17 @@ const Settings: React.FC = () => {
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState('');
-  const [saveSuccess, setSaveSuccess] = useState('');
+  // Company settings state
+  const [companyName, setCompanyName] = useState('Next Trace Logistics');
+  const [companyEmail, setCompanyEmail] = useState('support@nexttracelogistics.com');
+  const [companyPhone, setCompanyPhone] = useState('+1 (307) 200-8344');
+  const [companyAddress, setCompanyAddress] = useState('Wyoming');
+  const [companyTaxId, setCompanyTaxId] = useState('');
+  const [companyWebsite, setCompanyWebsite] = useState('https://nexttracelogistics.com');
+  const [loadingCompany, setLoadingCompany] = useState(true);
+  const [savingCompany, setSavingCompany] = useState(false);
+  const [companyError, setCompanyError] = useState('');
+  const [companySuccess, setCompanySuccess] = useState('');
 
   // Load real user data on mount
   useEffect(() => {
@@ -158,7 +166,24 @@ const Settings: React.FC = () => {
       })
       .catch(err => console.error('Failed to load user:', err))
       .finally(() => setLoadingUser(false));
+
+    // Load company settings
+    api.settings.getCompany()
+      .then(data => {
+        setCompanyName(data.company_name || '');
+        setCompanyEmail(data.company_email || '');
+        setCompanyPhone(data.company_phone || '');
+        setCompanyAddress(data.company_address || '');
+        setCompanyTaxId(data.company_tax_id || '');
+        setCompanyWebsite(data.company_website || '');
+      })
+      .catch(err => console.error('Failed to load company settings:', err))
+      .finally(() => setLoadingCompany(false));
   }, []);
+
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [saveSuccess, setSaveSuccess] = useState('');
 
   const handleProfileSave = async () => {
     setSaveError(''); setSaveSuccess('');
@@ -173,6 +198,34 @@ const Settings: React.FC = () => {
       setSaveError(err.message || 'Failed to save profile. Please try again.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCompanySave = async () => {
+    setCompanyError(''); setCompanySuccess('');
+    setSavingCompany(true);
+    try {
+      const data = await api.settings.updateCompany({
+        company_name: companyName,
+        company_email: companyEmail,
+        company_phone: companyPhone,
+        company_address: companyAddress,
+        company_tax_id: companyTaxId,
+        company_website: companyWebsite,
+      });
+      // Update local state from server response
+      setCompanyName(data.company_name || companyName);
+      setCompanyEmail(data.company_email || companyEmail);
+      setCompanyPhone(data.company_phone || companyPhone);
+      setCompanyAddress(data.company_address || companyAddress);
+      setCompanyTaxId(data.company_tax_id || companyTaxId);
+      setCompanyWebsite(data.company_website || companyWebsite);
+      setCompanySuccess('Company information saved successfully!');
+      setTimeout(() => setCompanySuccess(''), 3000);
+    } catch (err: any) {
+      setCompanyError(err.message || 'Failed to save company info. Please try again.');
+    } finally {
+      setSavingCompany(false);
     }
   };
 
@@ -394,36 +447,90 @@ const Settings: React.FC = () => {
             <p className="text-xs text-gray-500 mt-1">Manage your organization details</p>
           </div>
           <div className="p-6 space-y-4">
+            {/* Feedback */}
+            {companyError && (
+              <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+                <XCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{companyError}</p>
+              </div>
+            )}
+            {companySuccess && (
+              <div className="flex items-start gap-2 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                <CheckCircle size={16} className="text-green-500 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-green-700">{companySuccess}</p>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
                 <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Company Name</label>
-                <input type="text" defaultValue="Next Trace Logistics" className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none" />
+                <input
+                  type="text"
+                  value={companyName}
+                  onChange={e => setCompanyName(e.target.value)}
+                  disabled={loadingCompany}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none disabled:bg-gray-50"
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Business Email</label>
-                <input type="email" defaultValue="support@nexttracelogistics.com" className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none" />
+                <input
+                  type="email"
+                  value={companyEmail}
+                  onChange={e => setCompanyEmail(e.target.value)}
+                  disabled={loadingCompany}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none disabled:bg-gray-50"
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Business Phone</label>
-                <input type="tel" defaultValue="+1 (307) 200-8344" className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none" />
+                <input
+                  type="tel"
+                  value={companyPhone}
+                  onChange={e => setCompanyPhone(e.target.value)}
+                  disabled={loadingCompany}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none disabled:bg-gray-50"
+                />
               </div>
               <div className="sm:col-span-2">
                 <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Address</label>
-                <input type="text" defaultValue="Cameroon" className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none" />
+                <input
+                  type="text"
+                  value={companyAddress}
+                  onChange={e => setCompanyAddress(e.target.value)}
+                  disabled={loadingCompany}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none disabled:bg-gray-50"
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Tax ID / EIN</label>
-                <input type="text" defaultValue="XX-XXXXXXX" className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none" />
+                <input
+                  type="text"
+                  value={companyTaxId}
+                  onChange={e => setCompanyTaxId(e.target.value)}
+                  disabled={loadingCompany}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none disabled:bg-gray-50"
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Website</label>
-                <input type="url" defaultValue="https://nexusroutegloballogistics.com" className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none" />
+                <input
+                  type="url"
+                  value={companyWebsite}
+                  onChange={e => setCompanyWebsite(e.target.value)}
+                  disabled={loadingCompany}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none disabled:bg-gray-50"
+                />
               </div>
             </div>
           </div>
           <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
-            <button className="px-6 py-2.5 bg-[#0a192f] text-white text-sm font-medium rounded-lg hover:bg-[#112d57] transition-colors flex items-center gap-2">
-              <Save size={14} /> Save Company Info
+            <button
+              onClick={handleCompanySave}
+              disabled={savingCompany || loadingCompany}
+              className="px-6 py-2.5 bg-[#0a192f] text-white text-sm font-medium rounded-lg hover:bg-[#112d57] transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {savingCompany ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              {savingCompany ? 'Saving...' : 'Save Company Info'}
             </button>
           </div>
         </div>
