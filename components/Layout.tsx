@@ -81,7 +81,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <div className="hidden lg:block bg-[#0a192f] text-gray-300 text-xs py-2">
         <div className="max-w-7xl mx-auto px-6 flex justify-between items-center">
           <div className="flex items-center gap-6">
-            <span className="flex items-center gap-1.5"><Phone className="w-3 h-3" /> +1 (307) 200-8344</span>
+            <span className="flex items-center gap-1.5"><Phone className="w-3 h-3" /> +1 (412) 227-3484</span>
             <span className="flex items-center gap-1.5"><Mail className="w-3 h-3" /> support@nexttracelogistics.com</span>
             <span className="flex items-center gap-1.5"><MapPin className="w-3 h-3" /> Wyoming</span>
           </div>
@@ -280,7 +280,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 </li>
                 <li className="flex items-center gap-3">
                   <Phone className="w-4 h-4 flex-shrink-0 text-blue-400" />
-                  <span>+1 (307) 200-8344</span>
+                  <span>+1 (412) 227-3484</span>
                 </li>
                 <li className="flex items-center gap-3">
                   <Mail className="w-4 h-4 flex-shrink-0 text-blue-400" />

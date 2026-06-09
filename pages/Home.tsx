@@ -759,7 +759,7 @@ const ContactSection: React.FC = () => (
                 </div>
                 <div>
                   <h4 className="font-semibold text-white text-sm">Phone</h4>
-                  <p className="text-sm text-gray-400 mt-1">+1 (307) 200-8344</p>
+                  <p className="text-sm text-gray-400 mt-1">+1 (412) 227-3484</p>
                 </div>
               </div>
               <div className="flex items-start gap-4">

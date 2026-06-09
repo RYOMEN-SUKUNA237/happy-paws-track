@@ -362,7 +362,7 @@ const CTASection: React.FC<{ service: ServiceDetailType }> = ({ service }) => {
                   </div>
                   <div>
                     <h4 className="font-semibold text-[#0a192f] text-sm">Call Us</h4>
-                    <p className="text-sm text-gray-500">+1 (307) 200-8344</p>
+                    <p className="text-sm text-gray-500">+1 (412) 227-3484</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">

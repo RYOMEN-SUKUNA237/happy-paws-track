@@ -79,7 +79,7 @@ async function run() {
         email_confirm: true, // Skip email confirmation
         user_metadata: {
           full_name: 'Next Trace Admin',
-          phone: '+1 (307) 200-8344',
+          phone: '+1 (412) 227-3484',
         },
       });
 

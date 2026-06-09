@@ -5,7 +5,7 @@
  */
 
 const COMPANY_EMAIL_REF = process.env.COMPANY_EMAIL || 'support@nexttracelogistics.com';
-const COMPANY_PHONE_REF = '+1 (307) 200-8344';
+const COMPANY_PHONE_REF = '+1 (412) 227-3484';
 
 /**
  * Returns professional copy for each pause category.

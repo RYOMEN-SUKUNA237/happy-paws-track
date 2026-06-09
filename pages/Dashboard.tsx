@@ -212,22 +212,6 @@ const Dashboard: React.FC = () => {
     setShipments([]);
   };
 
-  // Global session expiry handler — called from any page when a 401 cannot be recovered
-  const handleSessionExpired = () => {
-    api.removeToken();
-    setIsLoggedIn(false);
-    setAdminUser(null);
-    setCouriers([]);
-    setShipments([]);
-  };
-
-  // Listen for session-expired custom event dispatched by api.ts
-  useEffect(() => {
-    const handler = () => handleSessionExpired();
-    window.addEventListener('ntl:session-expired', handler);
-    return () => window.removeEventListener('ntl:session-expired', handler);
-  }, []);
-
   const navigate = (page: string) => {
     setActivePage(page as AdminPage);
     setSidebarOpen(false);

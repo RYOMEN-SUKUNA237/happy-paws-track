@@ -21,7 +21,7 @@ async function ensureTable() {
 const DEFAULTS = {
   company_name:    'Next Trace Logistics',
   company_email:   'support@nexttracelogistics.com',
-  company_phone:   '+1 (307) 200-8344',
+  company_phone:   '+1 (412) 227-3484',
   company_address: 'Wyoming',
   company_tax_id:  '',
   company_website: 'https://nexttracelogistics.com',

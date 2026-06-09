@@ -143,7 +143,7 @@ const Settings: React.FC = () => {
   // Company settings state
   const [companyName, setCompanyName] = useState('Next Trace Logistics');
   const [companyEmail, setCompanyEmail] = useState('support@nexttracelogistics.com');
-  const [companyPhone, setCompanyPhone] = useState('+1 (307) 200-8344');
+  const [companyPhone, setCompanyPhone] = useState('+1 (412) 227-3484');
   const [companyAddress, setCompanyAddress] = useState('Wyoming');
   const [companyTaxId, setCompanyTaxId] = useState('');
   const [companyWebsite, setCompanyWebsite] = useState('https://nexttracelogistics.com');
