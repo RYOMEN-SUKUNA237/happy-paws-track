@@ -195,7 +195,10 @@ const Settings: React.FC = () => {
       setSaveSuccess('Profile updated successfully!');
       setTimeout(() => setSaveSuccess(''), 3000);
     } catch (err: any) {
-      setSaveError(err.message || 'Failed to save profile. Please try again.');
+      // Session-expired errors are handled globally (Dashboard logs out) — don't show here
+      if (!err.message?.toLowerCase().includes('session')) {
+        setSaveError(err.message || 'Failed to save profile. Please try again.');
+      }
     } finally {
       setSaving(false);
     }
@@ -223,7 +226,10 @@ const Settings: React.FC = () => {
       setCompanySuccess('Company information saved successfully!');
       setTimeout(() => setCompanySuccess(''), 3000);
     } catch (err: any) {
-      setCompanyError(err.message || 'Failed to save company info. Please try again.');
+      // Session-expired errors are handled globally (Dashboard logs out) — don't show here
+      if (!err.message?.toLowerCase().includes('session')) {
+        setCompanyError(err.message || 'Failed to save company info. Please try again.');
+      }
     } finally {
       setSavingCompany(false);
     }

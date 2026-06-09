@@ -106,8 +106,9 @@ async function apiFetch(endpoint: string, options: RequestInit = {}, _retried = 
       // Retry the original request with the new token
       return apiFetch(endpoint, options, true);
     }
-    // Refresh failed — clear tokens and throw
+    // Refresh failed — clear tokens, dispatch global event so Dashboard logs out cleanly
     removeToken();
+    window.dispatchEvent(new CustomEvent('ntl:session-expired'));
     throw new Error('Session expired. Please log in again.');
   }
 

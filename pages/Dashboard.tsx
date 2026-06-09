@@ -192,7 +192,9 @@ const Dashboard: React.FC = () => {
     setLoginLoading(true);
     try {
       const data = await api.auth.login(loginForm.username, loginForm.password);
-      api.setToken(data.token);
+      // Store both tokens — access token for requests, refresh token for silent renewal
+      if (data.token) api.setToken(data.token);
+      if (data.refresh_token) api.setRefreshToken(data.refresh_token);
       setAdminUser(data.user);
       setIsLoggedIn(true);
     } catch (err: any) {
@@ -209,6 +211,22 @@ const Dashboard: React.FC = () => {
     setCouriers([]);
     setShipments([]);
   };
+
+  // Global session expiry handler — called from any page when a 401 cannot be recovered
+  const handleSessionExpired = () => {
+    api.removeToken();
+    setIsLoggedIn(false);
+    setAdminUser(null);
+    setCouriers([]);
+    setShipments([]);
+  };
+
+  // Listen for session-expired custom event dispatched by api.ts
+  useEffect(() => {
+    const handler = () => handleSessionExpired();
+    window.addEventListener('ntl:session-expired', handler);
+    return () => window.removeEventListener('ntl:session-expired', handler);
+  }, []);
 
   const navigate = (page: string) => {
     setActivePage(page as AdminPage);
