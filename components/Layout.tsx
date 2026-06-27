@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X, ArrowRight, Phone, Mail, MapPin, Facebook, Twitter, Linkedin, Instagram, ChevronUp } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-const logoImg = '/icon.jpg';
+const logoImg = '/rrr.jpg';
 
 interface LayoutProps {
   children: React.ReactNode;
