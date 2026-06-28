@@ -12,8 +12,8 @@ const navLinks = [
   { label: 'Home', href: '#home' },
   { label: 'About Us', href: '#about' },
   { label: 'Services', href: '#services' },
-  { label: 'Track & Trace', href: '#track' },
-  { label: 'Projects', href: '#projects' },
+  { label: 'Track Your Pet', href: '#track' },
+  { label: 'Breeds', href: '#breeds' },
   { label: 'Reviews', href: '/reviews' },
   { label: 'FAQ', href: '#faq' },
   { label: 'Contact Us', href: '#contact' },
@@ -82,7 +82,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="max-w-7xl mx-auto px-6 flex justify-between items-center">
           <div className="flex items-center gap-6">
             <span className="flex items-center gap-1.5"><Phone className="w-3 h-3" /> +1 (412) 227-3484</span>
-            <span className="flex items-center gap-1.5"><Mail className="w-3 h-3" /> support@nexttracelogistics.com</span>
+            <span className="flex items-center gap-1.5"><Mail className="w-3 h-3" /> support@happypawstrace.com</span>
             <span className="flex items-center gap-1.5"><MapPin className="w-3 h-3" /> Wyoming</span>
           </div>
           <div className="flex items-center gap-4">
@@ -113,7 +113,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             className="text-xl lg:text-2xl font-bold text-[#0a192f] tracking-tight flex items-center gap-2 flex-shrink-0"
           >
             <img src={logoImg} alt="Logo" className="w-8 h-8 object-cover rounded-sm" />
-            <span>NEXT TRACE</span>
+            <span>HAPPY PAW</span>
           </a>
 
           {/* Desktop Links */}
@@ -138,7 +138,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               onClick={(e) => { e.preventDefault(); scrollToSection('#contact'); }}
               className="hidden lg:flex px-5 py-2.5 bg-[#0a192f] text-white text-sm font-medium hover:bg-[#112d57] transition-all rounded-sm items-center gap-2 group"
             >
-              Get a Quote
+              Book a Transport
               <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </a>
             <button
@@ -224,13 +224,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <div className="sm:col-span-2 lg:col-span-1">
               <div className="flex items-center gap-2 mb-4">
                 <img src={logoImg} alt="Logo" className="w-8 h-8 object-cover rounded-sm" />
-                <span className="text-xl font-bold">NEXT TRACE</span>
+                <span className="text-xl font-bold">HAPPY PAW TRACE</span>
               </div>
               <p className="text-gray-400 text-sm leading-relaxed mb-6">
-                Engineering global connectivity through precision logistics and unrivaled security since 2010.
+                Safe, stress-free, and real-time tracking for your beloved pets — from pickup to happy reunion.
               </p>
               <p className="text-gray-400 text-sm leading-relaxed mb-6">
-                Next Trace Logistics — your trusted partner for every mile.
+                Happy Paw Trace — because every pet deserves a loving journey.
               </p>
               <div className="flex items-center gap-3">
                 <a href="#" className="w-9 h-9 bg-white/10 rounded-full flex items-center justify-center hover:bg-blue-600 transition-colors"><Facebook className="w-4 h-4" /></a>
@@ -262,11 +262,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <div>
               <h4 className="font-semibold mb-5 text-white text-sm uppercase tracking-wider">Our Services</h4>
               <ul className="space-y-3 text-sm text-gray-400">
-                <li><a href="#services" onClick={(e) => { e.preventDefault(); scrollToSection('#services'); }} className="hover:text-white transition-colors">Air Freight</a></li>
-                <li><a href="#services" onClick={(e) => { e.preventDefault(); scrollToSection('#services'); }} className="hover:text-white transition-colors">Ocean Freight</a></li>
-                <li><a href="#services" onClick={(e) => { e.preventDefault(); scrollToSection('#services'); }} className="hover:text-white transition-colors">Land Transport</a></li>
-                <li><a href="#services" onClick={(e) => { e.preventDefault(); scrollToSection('#services'); }} className="hover:text-white transition-colors">Express Courier</a></li>
-                <li><a href="#services" onClick={(e) => { e.preventDefault(); scrollToSection('#services'); }} className="hover:text-white transition-colors">Warehousing</a></li>
+                <li><a href="#services" onClick={(e) => { e.preventDefault(); scrollToSection('#services'); }} className="hover:text-white transition-colors">Pet Relocation & Transport</a></li>
+                <li><a href="#services" onClick={(e) => { e.preventDefault(); scrollToSection('#services'); }} className="hover:text-white transition-colors">Real-Time Pet Tracking</a></li>
+                <li><a href="#services" onClick={(e) => { e.preventDefault(); scrollToSection('#services'); }} className="hover:text-white transition-colors">International Pet Travel</a></li>
+                <li><a href="#services" onClick={(e) => { e.preventDefault(); scrollToSection('#services'); }} className="hover:text-white transition-colors">Veterinary Coordination</a></li>
+                <li><a href="#services" onClick={(e) => { e.preventDefault(); scrollToSection('#services'); }} className="hover:text-white transition-colors">Emergency Pet Rescue</a></li>
               </ul>
             </div>
 
@@ -284,7 +284,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 </li>
                 <li className="flex items-center gap-3">
                   <Mail className="w-4 h-4 flex-shrink-0 text-blue-400" />
-                  <span>support@nexttracelogistics.com</span>
+                  <span>support@happypawstrace.com</span>
                 </li>
               </ul>
             </div>
@@ -294,7 +294,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {/* Bottom Bar */}
         <div className="border-t border-gray-800">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-gray-500">
-            <p>© {new Date().getFullYear()} Next Trace Logistics. All rights reserved.</p>
+            <p>© {new Date().getFullYear()} Happy Paw Trace. All rights reserved.</p>
             <div className="flex gap-6">
               <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
               <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
