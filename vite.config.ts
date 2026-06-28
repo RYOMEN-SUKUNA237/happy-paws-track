@@ -19,8 +19,8 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react()],
       define: {
-        '__MAPBOX_TOKEN__': JSON.stringify(env.VITE_MAPBOX_TOKEN || env.MAPBOX_TOKEN || ''),
-        '__GEMINI_API_KEY__': JSON.stringify(env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY || ''),
+        '__MAPBOX_TOKEN__': JSON.stringify(env.VITE_MAPBOX_TOKEN || env.MAPBOX_TOKEN || process.env.VITE_MAPBOX_TOKEN || process.env.MAPBOX_TOKEN || ''),
+        '__GEMINI_API_KEY__': JSON.stringify(env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || ''),
       },
       resolve: {
         alias: {
