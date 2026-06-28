@@ -81,9 +81,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <div className="hidden lg:block bg-[#0a192f] text-gray-300 text-xs py-2">
         <div className="max-w-7xl mx-auto px-6 flex justify-between items-center">
           <div className="flex items-center gap-6">
-            <span className="flex items-center gap-1.5"><Phone className="w-3 h-3" /> +1 (412) 227-3484</span>
-            <span className="flex items-center gap-1.5"><Mail className="w-3 h-3" /> support@happypawstrace.com</span>
-            <span className="flex items-center gap-1.5"><MapPin className="w-3 h-3" /> Wyoming</span>
+            <span className="flex items-center gap-1.5"><Mail className="w-3 h-3" /> happypawstransitusa@gmail.com</span>
           </div>
           <div className="flex items-center gap-4">
             <a href="#" className="hover:text-white transition-colors"><Facebook className="w-3.5 h-3.5" /></a>
@@ -274,17 +272,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <div>
               <h4 className="font-semibold mb-5 text-white text-sm uppercase tracking-wider">Contact Us</h4>
               <ul className="space-y-4 text-sm text-gray-400">
-                <li className="flex items-start gap-3">
-                  <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-400" />
-                  <span>Wyoming</span>
-                </li>
-                <li className="flex items-center gap-3">
-                  <Phone className="w-4 h-4 flex-shrink-0 text-blue-400" />
-                  <span>+1 (412) 227-3484</span>
-                </li>
                 <li className="flex items-center gap-3">
                   <Mail className="w-4 h-4 flex-shrink-0 text-blue-400" />
-                  <span>support@happypawstrace.com</span>
+                  <span>happypawstransitusa@gmail.com</span>
                 </li>
               </ul>
             </div>

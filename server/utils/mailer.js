@@ -8,16 +8,14 @@ const transporter = nodemailer.createTransport({
   port: parseInt(process.env.SMTP_PORT || '587'),
   secure: false,
   auth: {
-    user: process.env.SMTP_USER || process.env.COMPANY_EMAIL || 'support@nexttracelogistics.com',
+    user: process.env.SMTP_USER || 'happypawstransitusa@gmail.com',
     pass: process.env.SMTP_PASS || '',
   },
 });
 
-const COMPANY_NAME = 'Next Trace Logistics';
-const COMPANY_EMAIL = process.env.COMPANY_EMAIL || 'support@nexttracelogistics.com';
-const COMPANY_PHONE = '+1 (412) 227-3484';
-const COMPANY_ADDRESS = 'Wyoming';
-const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://nexttrace.logistics').replace(/\/$/, '');
+const COMPANY_NAME = 'Happy Paw Trace';
+const COMPANY_EMAIL = process.env.COMPANY_EMAIL || 'happypawstransitusa@gmail.com';
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://happy-paws-track.vercel.app').replace(/\/$/, '');
 
 // Build a deep-link to the tracking page (HashRouter: /#/track/ID)
 function trackingUrl(trackingId) {
@@ -77,15 +75,14 @@ function emailTemplate({ title, preheader, bodyHtml }) {
   <span class="preheader">${preheader || ''}</span>
   <div class="container">
     <div class="header">
-      <h1>✈️ ${COMPANY_NAME}</h1>
-      <p>Global Logistics Solutions</p>
+      <h1>🐾 ${COMPANY_NAME}</h1>
+      <p>Safe & Real-Time Pet Tracking</p>
     </div>
     <div class="body-content">
       ${bodyHtml}
     </div>
     <div class="footer">
       <p>${COMPANY_NAME}</p>
-      <p>${COMPANY_ADDRESS} · ${COMPANY_PHONE}</p>
       <p><a href="mailto:${COMPANY_EMAIL}">${COMPANY_EMAIL}</a></p>
       <p style="margin-top: 12px; color: #4a5568; font-size: 10px;">This is an automated message. Please do not reply directly to this email.</p>
     </div>
@@ -453,8 +450,6 @@ function buildShipmentPauseEmail({ shipment, isPaused, pauseCategory, pauseReaso
         <p style="margin:0 0 4px;font-size:12px;color:#6b7280;">Need immediate assistance?</p>
         <p style="margin:0;font-size:13px;color:#374151;">
           📧 <a href="mailto:${COMPANY_EMAIL}" style="color:#3b82f6;font-weight:600;">${COMPANY_EMAIL}</a>
-          &nbsp;&nbsp;|&nbsp;&nbsp;
-          📞 <strong>${COMPANY_PHONE}</strong>
         </p>
       </div>
     `,

@@ -253,10 +253,8 @@ const TrackingDashboard: React.FC = () => {
       <header className="bg-[#0a192f] text-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center">
-              <Package size={18} />
-            </div>
-            <span className="text-lg font-bold tracking-tight">Next Trace Logistics</span>
+            <img src="/rrr.jpg" alt="Happy Paw Trace" className="w-9 h-9 object-cover rounded-lg" />
+            <span className="text-lg font-bold tracking-tight">Happy Paw Trace</span>
           </Link>
           <form onSubmit={handleSearch} className="flex items-center gap-2">
             <div className="relative">
@@ -713,7 +711,7 @@ const TrackingDashboard: React.FC = () => {
 
       {/* Footer */}
       <footer className="bg-[#0a192f] text-gray-400 text-center py-6 mt-12">
-        <p className="text-xs">&copy; 2026 Next Trace Logistics. All rights reserved.</p>
+        <p className="text-xs">&copy; {new Date().getFullYear()} Happy Paw Trace. All rights reserved.</p>
       </footer>
 
       <style>{`

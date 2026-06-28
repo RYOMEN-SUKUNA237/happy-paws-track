@@ -740,9 +740,7 @@ const ContactSection: React.FC = () => (
 
             <div className="space-y-5 pt-4">
               {[
-                { icon: MapPin, title: 'Headquarters', info: 'Wyoming, USA' },
-                { icon: Phone, title: 'Phone', info: '+1 (412) 227-3484' },
-                { icon: Mail, title: 'Email', info: 'support@happypawstrace.com' },
+                { icon: Mail, title: 'Email', info: 'happypawstransitusa@gmail.com' },
                 { icon: Clock, title: 'Working Hours', info: 'Mon–Fri: 8AM–8PM EST | 24/7 Emergency Line' },
               ].map(({ icon: Icon, title, info }) => (
                 <div key={title} className="flex items-start gap-4">
