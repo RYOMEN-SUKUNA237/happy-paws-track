@@ -1,5 +1,5 @@
 const express = require('express');
-const { pool } = require('../db');
+const { pool, supabase } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 const { generateTrackingId } = require('../utils/generators');
 const { sendMail, buildShipmentCreationEmail, buildShipmentPauseEmail, buildShipmentStatusChangeEmail } = require('../utils/mailer');
@@ -107,51 +107,41 @@ router.get('/', authMiddleware, async (req, res) => {
 // GET /api/shipments/:id/track — Public tracking endpoint (no auth required)
 router.get('/:id/track', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT tracking_id, sender_name, receiver_name, origin, destination,
-              origin_lat, origin_lng, dest_lat, dest_lng, current_lat, current_lng,
-              status, progress, is_paused, estimated_delivery, actual_delivery,
-              cargo_type, weight, route_data, transport_modes, route_distance,
-              route_duration, route_summary, created_at,
-              departed_at, paused_at, total_paused_ms,
-              multi_modal_segments, multi_modal_stops,
-              pause_category, pause_reason
-       FROM shipments WHERE tracking_id = $1`, [req.params.id]
-    );
+    const { data: shipment, error: shipErr } = await supabase
+      .from('shipments')
+      .select('tracking_id, sender_name, receiver_name, origin, destination, origin_lat, origin_lng, dest_lat, dest_lng, current_lat, current_lng, status, progress, is_paused, estimated_delivery, actual_delivery, cargo_type, weight, route_data, transport_modes, route_distance, route_duration, route_summary, created_at, departed_at, paused_at, total_paused_ms, multi_modal_segments, multi_modal_stops, pause_category, pause_reason, courier_id')
+      .eq('tracking_id', req.params.id)
+      .single();
 
-    const shipment = rows[0];
-    if (!shipment) return res.status(404).json({ error: 'Shipment not found.' });
+    if (shipErr || !shipment) return res.status(404).json({ error: 'Shipment not found.' });
 
     // Parse JSON fields
-    if (shipment.route_data && typeof shipment.route_data === 'string') {
-      try { shipment.route_data = JSON.parse(shipment.route_data); } catch (e) {}
-    }
-    if (shipment.transport_modes && typeof shipment.transport_modes === 'string') {
-      try { shipment.transport_modes = JSON.parse(shipment.transport_modes); } catch (e) {}
-    }
-    if (shipment.multi_modal_segments && typeof shipment.multi_modal_segments === 'string') {
-      try { shipment.multi_modal_segments = JSON.parse(shipment.multi_modal_segments); } catch (e) {}
-    }
-    if (shipment.multi_modal_stops && typeof shipment.multi_modal_stops === 'string') {
-      try { shipment.multi_modal_stops = JSON.parse(shipment.multi_modal_stops); } catch (e) {}
+    const jsonFields = ['route_data', 'transport_modes', 'multi_modal_segments', 'multi_modal_stops'];
+    for (const f of jsonFields) {
+      if (shipment[f] && typeof shipment[f] === 'string') {
+        try { shipment[f] = JSON.parse(shipment[f]); } catch (e) {}
+      }
     }
 
-    // Compute real-time progress
     enrichShipment(shipment);
 
-    const { rows: history } = await pool.query(
-      'SELECT status, location, lat, lng, notes, created_at FROM tracking_history WHERE tracking_id = $1 ORDER BY created_at DESC', [req.params.id]
-    );
+    const { data: history } = await supabase
+      .from('tracking_history')
+      .select('status, location, lat, lng, notes, created_at')
+      .eq('tracking_id', req.params.id)
+      .order('created_at', { ascending: false });
 
-    // Get courier info (public-safe fields only)
-    const { rows: fullRows } = await pool.query('SELECT courier_id FROM shipments WHERE tracking_id = $1', [req.params.id]);
     let courier = null;
-    if (fullRows[0] && fullRows[0].courier_id) {
-      const { rows: cRows } = await pool.query('SELECT courier_id, name, phone, vehicle_type, avatar, rating FROM couriers WHERE courier_id = $1', [fullRows[0].courier_id]);
-      courier = cRows[0] || null;
+    if (shipment.courier_id) {
+      const { data: courierData } = await supabase
+        .from('couriers')
+        .select('courier_id, name, phone, vehicle_type, avatar, rating')
+        .eq('courier_id', shipment.courier_id)
+        .single();
+      courier = courierData || null;
     }
 
-    res.json({ shipment, history, courier });
+    res.json({ shipment, history: history || [], courier });
   } catch (err) {
     console.error('Track shipment error:', err);
     res.status(500).json({ error: 'Internal server error.' });
