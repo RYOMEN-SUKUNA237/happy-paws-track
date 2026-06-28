@@ -3,29 +3,6 @@ const router = express.Router();
 const { pool } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 
-// ─── ENSURE TABLE EXISTS ─────────────────────────────────────────────
-(async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS reviews (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(200) NOT NULL,
-        email VARCHAR(200) NOT NULL,
-        role VARCHAR(200) DEFAULT 'Verified Customer',
-        avatar TEXT,
-        text TEXT NOT NULL,
-        rating INTEGER DEFAULT 5 CHECK (rating >= 1 AND rating <= 5),
-        status VARCHAR(20) DEFAULT 'pending',
-        admin_notes TEXT,
-        created_at TIMESTAMP DEFAULT NOW(),
-        approved_at TIMESTAMP
-      )
-    `);
-    console.log('✅ Reviews table ready');
-  } catch (err) {
-    console.error('❌ Reviews table creation error:', err.message);
-  }
-})();
 
 // ─── PUBLIC: Submit a review (goes to pending) ───────────────────────
 router.post('/', async (req, res) => {

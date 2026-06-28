@@ -5,46 +5,6 @@ const { sendMail, buildSupportNotificationEmail, buildTrackingUpdateEmail, email
 
 const router = express.Router();
 
-// ─── ENSURE TABLES EXIST ─────────────────────────────────────────────
-(async () => {
-  try {
-    // Table for email drafts (admin reviews before sending)
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS email_drafts (
-        id SERIAL PRIMARY KEY,
-        type VARCHAR(50) NOT NULL DEFAULT 'tracking_update',
-        recipient_email VARCHAR(200) NOT NULL,
-        recipient_name VARCHAR(200),
-        subject TEXT NOT NULL,
-        html_body TEXT NOT NULL,
-        text_body TEXT,
-        status VARCHAR(20) DEFAULT 'draft',
-        related_tracking_id VARCHAR(50),
-        related_conversation_id INTEGER,
-        metadata JSONB DEFAULT '{}',
-        created_at TIMESTAMP DEFAULT NOW(),
-        sent_at TIMESTAMP
-      )
-    `);
-
-    // Table for tracking subscribers
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS tracking_subscribers (
-        id SERIAL PRIMARY KEY,
-        tracking_id VARCHAR(50) NOT NULL,
-        email VARCHAR(200) NOT NULL,
-        name VARCHAR(200),
-        subscribed_at TIMESTAMP DEFAULT NOW(),
-        is_active BOOLEAN DEFAULT TRUE,
-        UNIQUE(tracking_id, email)
-      )
-    `);
-
-    console.log('✅ Email drafts & tracking subscribers tables ready');
-  } catch (err) {
-    console.error('❌ Email tables creation error:', err.message);
-  }
-})();
 
 // ─── HELPER: Get all admin emails from Supabase Auth ─────────────────
 async function getAdminEmails() {
