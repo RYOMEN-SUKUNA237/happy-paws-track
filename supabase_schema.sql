@@ -1,5 +1,5 @@
 -- ============================================================
--- NEXT TRACE LOGISTICS — COMPLETE SUPABASE POSTGRESQL SCHEMA
+-- HAPPY PAW TRACE — COMPLETE SUPABASE POSTGRESQL SCHEMA
 -- Run this in the Supabase SQL Editor for project fdtchmevoksettmzbkwx
 -- ============================================================
 

@@ -341,7 +341,7 @@ export const reviews = {
 
   adminList: (params?: { status?: string; search?: string }) => {
     const query = new URLSearchParams();
-    if (params?.status) query.set('status', params.search);
+    if (params?.status) query.set('status', params.status);
     if (params?.search) query.set('search', params.search);
     return apiFetch(`/reviews/admin?${query.toString()}`);
   },

@@ -19,12 +19,12 @@ async function ensureTable() {
 
 // Default values
 const DEFAULTS = {
-  company_name:    'Next Trace Logistics',
-  company_email:   'support@nexttracelogistics.com',
+  company_name:    'Happy Paw Trace',
+  company_email:   'support@happypawstransit.com',
   company_phone:   '+1 (412) 227-3484',
   company_address: 'Wyoming',
   company_tax_id:  '',
-  company_website: 'https://nexttracelogistics.com',
+  company_website: 'https://happypawstransit.com',
 };
 
 // GET /api/settings/company — public (used by email templates etc.)

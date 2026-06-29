@@ -1,7 +1,7 @@
 {
-  "name": "aura-track-server",
+  "name": "happy-paw-trace-server",
   "version": "1.0.0",
-  "description": "Aura Track Logistics Backend API",
+  "description": "Happy Paw Trace Backend API",
   "type": "commonjs",
   "main": "index.js",
   "scripts": {

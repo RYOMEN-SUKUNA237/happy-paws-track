@@ -66,7 +66,7 @@ export async function geocodeSearch(query: string): Promise<Array<{ lng: number;
   }
 }
 
-// ─── ROUTE STYLE CONSTANTS (Aura Track Theme) ──────────────────────
+// ─── ROUTE STYLE CONSTANTS (Happy Paw Trace Theme) ──────────────────────
 export const ROUTE_STYLE = {
   color: '#0a192f',          // Navy blue
   width: 5,

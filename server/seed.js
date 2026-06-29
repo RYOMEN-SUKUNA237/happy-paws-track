@@ -10,7 +10,7 @@ async function seed() {
     const hash = await bcrypt.hash('admin123', 12);
     await pool.query(
       'INSERT INTO users (username, email, password, full_name, phone, role) VALUES ($1, $2, $3, $4, $5, $6)',
-      ['admin', 'admin@auratrack.com', hash, 'Admin User', '+1 (800) 555-0199', 'admin']
+      ['admin', 'admin@happypawstransit.com', hash, 'Admin User', '+1 (800) 555-0199', 'admin']
     );
     console.log('✅ Admin user created (username: admin, password: admin123)');
   } else {
@@ -21,11 +21,11 @@ async function seed() {
   const { rows: [{ count: courierCount }] } = await pool.query('SELECT COUNT(*) as count FROM couriers');
   if (parseInt(courierCount) === 0) {
     const couriers = [
-      ['AT-CUR-7X92KP', 'Marcus Johnson', 'marcus@auratrack.com', '+1 555-0101', 'van', 'TX-4821-MJ', 'Downtown Houston', 'on-delivery', 342, 4.8, 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?fm=jpg&fit=crop&w=100&q=80'],
-      ['AT-CUR-3B81NQ', 'Sofia Martinez', 'sofia@auratrack.com', '+1 555-0102', 'motorcycle', 'TX-1192-SM', 'Midtown', 'active', 578, 4.9, 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?fm=jpg&fit=crop&w=100&q=80'],
-      ['AT-CUR-9D44RL', 'Emily Chen', 'emily@auratrack.com', '+1 555-0103', 'car', 'TX-8830-EC', 'Galleria Area', 'on-break', 124, 4.6, 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?fm=jpg&fit=crop&w=100&q=80'],
-      ['AT-CUR-5F27WT', 'David Okafor', 'david@auratrack.com', '+1 555-0104', 'truck', 'TX-6654-DO', 'Industrial District', 'active', 891, 4.7, 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?fm=jpg&fit=crop&w=100&q=80'],
-      ['AT-CUR-2H65YM', 'Jake Williams', 'jake@auratrack.com', '+1 555-0105', 'van', 'TX-3347-JW', 'Medical Center', 'inactive', 56, 4.3, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?fm=jpg&fit=crop&w=100&q=80'],
+      ['HPT-CUR-7X92KP', 'Marcus Johnson', 'marcus@happypawstransit.com', '+1 555-0101', 'van', 'TX-4821-MJ', 'Downtown Houston', 'on-delivery', 342, 4.8, 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?fm=jpg&fit=crop&w=100&q=80'],
+      ['HPT-CUR-3B81NQ', 'Sofia Martinez', 'sofia@happypawstransit.com', '+1 555-0102', 'motorcycle', 'TX-1192-SM', 'Midtown', 'active', 578, 4.9, 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?fm=jpg&fit=crop&w=100&q=80'],
+      ['HPT-CUR-9D44RL', 'Emily Chen', 'emily@happypawstransit.com', '+1 555-0103', 'car', 'TX-8830-EC', 'Galleria Area', 'on-break', 124, 4.6, 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?fm=jpg&fit=crop&w=100&q=80'],
+      ['HPT-CUR-5F27WT', 'David Okafor', 'david@happypawstransit.com', '+1 555-0104', 'truck', 'TX-6654-DO', 'Industrial District', 'active', 891, 4.7, 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?fm=jpg&fit=crop&w=100&q=80'],
+      ['HPT-CUR-2H65YM', 'Jake Williams', 'jake@happypawstransit.com', '+1 555-0105', 'van', 'TX-3347-JW', 'Medical Center', 'inactive', 56, 4.3, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?fm=jpg&fit=crop&w=100&q=80'],
     ];
 
     for (const c of couriers) {
@@ -43,14 +43,14 @@ async function seed() {
   const { rows: [{ count: customerCount }] } = await pool.query('SELECT COUNT(*) as count FROM customers');
   if (parseInt(customerCount) === 0) {
     const customers = [
-      ['AT-CST-TX8801', 'TechFlow Inc.', 'John Rivera', 'john@techflow.com', '+1 555-2001', '500 Tech Lane', 'Houston', 'TX', 'US', '77001', 'business'],
-      ['AT-CST-NY3302', 'MedPharma Global', 'Dr. Sarah Lin', 'sarah@medpharma.com', '+1 555-2002', '200 Pharma Blvd', 'New York', 'NY', 'US', '10001', 'business'],
-      ['AT-CST-MI4403', 'AutoMakers Co.', 'Mike Torres', 'mike@automakers.com', '+1 555-2003', '800 Motor Ave', 'Detroit', 'MI', 'US', '48201', 'business'],
-      ['AT-CST-FL5504', null, 'Lisa Morgan', 'lisa.morgan@email.com', '+1 555-2004', '45 Palm Street', 'Miami', 'FL', 'US', '33101', 'individual'],
-      ['AT-CST-MA6605', 'Book Depot', 'Robert Kim', 'robert@bookdepot.com', '+1 555-2005', '12 Library Rd', 'Boston', 'MA', 'US', '02101', 'business'],
-      ['AT-CST-CA7706', 'Fresh Foods Co.', 'Anna Perez', 'anna@freshfoods.com', '+1 555-2006', '90 Market St', 'San Francisco', 'CA', 'US', '94101', 'business'],
-      ['AT-CST-GA8807', null, 'James Brown', 'james.b@email.com', '+1 555-2007', '33 Peach Lane', 'Atlanta', 'GA', 'US', '30301', 'individual'],
-      ['AT-CST-IL9908', 'City Hospital', 'Dr. Karen White', 'karen@cityhospital.org', '+1 555-2008', '1 Health Pkwy', 'Chicago', 'IL', 'US', '60601', 'business'],
+      ['HPT-CST-TX8801', 'TechFlow Inc.', 'John Rivera', 'john@techflow.com', '+1 555-2001', '500 Tech Lane', 'Houston', 'TX', 'US', '77001', 'business'],
+      ['HPT-CST-NY3302', 'MedPharma Global', 'Dr. Sarah Lin', 'sarah@medpharma.com', '+1 555-2002', '200 Pharma Blvd', 'New York', 'NY', 'US', '10001', 'business'],
+      ['HPT-CST-MI4403', 'AutoMakers Co.', 'Mike Torres', 'mike@automakers.com', '+1 555-2003', '800 Motor Ave', 'Detroit', 'MI', 'US', '48201', 'business'],
+      ['HPT-CST-FL5504', null, 'Lisa Morgan', 'lisa.morgan@email.com', '+1 555-2004', '45 Palm Street', 'Miami', 'FL', 'US', '33101', 'individual'],
+      ['HPT-CST-MA6605', 'Book Depot', 'Robert Kim', 'robert@bookdepot.com', '+1 555-2005', '12 Library Rd', 'Boston', 'MA', 'US', '02101', 'business'],
+      ['HPT-CST-CA7706', 'Fresh Foods Co.', 'Anna Perez', 'anna@freshfoods.com', '+1 555-2006', '90 Market St', 'San Francisco', 'CA', 'US', '94101', 'business'],
+      ['HPT-CST-GA8807', null, 'James Brown', 'james.b@email.com', '+1 555-2007', '33 Peach Lane', 'Atlanta', 'GA', 'US', '30301', 'individual'],
+      ['HPT-CST-IL9908', 'City Hospital', 'Dr. Karen White', 'karen@cityhospital.org', '+1 555-2008', '1 Health Pkwy', 'Chicago', 'IL', 'US', '60601', 'business'],
     ];
 
     for (const c of customers) {
@@ -74,22 +74,22 @@ async function seed() {
 
     // departed_at in the past, estimated_delivery in the future → shipments are actively progressing
     const shipments = [
-      ['AT-8842-X9', 'TechFlow Inc.', 'john@techflow.com', '+1 555-2001', 'Global Parts Ltd.', 'parts@globalparts.com', '+1 555-3001', 'Houston, TX', 'Los Angeles, CA', 29.7604, -95.3698, 34.0522, -118.2437, 'in-transit', 'AT-CUR-7X92KP', 'AT-CST-TX8801', '24.5 kg', '60x40x30 cm', 'Electronics', 0, false,
+      ['HPT-8842-X9', 'TechFlow Inc.', 'john@techflow.com', '+1 555-2001', 'Global Parts Ltd.', 'parts@globalparts.com', '+1 555-3001', 'Houston, TX', 'Los Angeles, CA', 29.7604, -95.3698, 34.0522, -118.2437, 'in-transit', 'HPT-CUR-7X92KP', 'HPT-CST-TX8801', '24.5 kg', '60x40x30 cm', 'Electronics', 0, false,
         new Date(now + days(2)).toISOString().split('T')[0],
         new Date(now - hours(18)).toISOString()],
-      ['AT-3291-K4', 'MedPharma Global', 'sarah@medpharma.com', '+1 555-2002', 'City Hospital', 'karen@cityhospital.org', '+1 555-2008', 'New York, NY', 'Chicago, IL', 40.7128, -74.006, 41.8781, -87.6298, 'out-for-delivery', 'AT-CUR-3B81NQ', 'AT-CST-NY3302', '8.2 kg', '30x20x15 cm', 'Pharmaceuticals', 0, false,
+      ['HPT-3291-K4', 'MedPharma Global', 'sarah@medpharma.com', '+1 555-2002', 'City Hospital', 'karen@cityhospital.org', '+1 555-2008', 'New York, NY', 'Chicago, IL', 40.7128, -74.006, 41.8781, -87.6298, 'out-for-delivery', 'HPT-CUR-3B81NQ', 'HPT-CST-NY3302', '8.2 kg', '30x20x15 cm', 'Pharmaceuticals', 0, false,
         new Date(now + hours(8)).toISOString().split('T')[0],
         new Date(now - hours(30)).toISOString()],
-      ['AT-5510-A2', 'AutoMakers Co.', 'mike@automakers.com', '+1 555-2003', 'Precision Motors', 'pm@precisionmotors.com', '+1 555-3003', 'Detroit, MI', 'Houston, TX', 42.3314, -83.0458, 29.7604, -95.3698, 'picked-up', 'AT-CUR-5F27WT', 'AT-CST-MI4403', '150.0 kg', '120x80x60 cm', 'Auto Parts', 0, false,
+      ['HPT-5510-A2', 'AutoMakers Co.', 'mike@automakers.com', '+1 555-2003', 'Precision Motors', 'pm@precisionmotors.com', '+1 555-3003', 'Detroit, MI', 'Houston, TX', 42.3314, -83.0458, 29.7604, -95.3698, 'picked-up', 'HPT-CUR-5F27WT', 'HPT-CST-MI4403', '150.0 kg', '120x80x60 cm', 'Auto Parts', 0, false,
         new Date(now + days(4)).toISOString().split('T')[0],
         new Date(now - hours(4)).toISOString()],
-      ['AT-7723-M6', 'Fashion House', 'info@fashionhouse.com', '+1 555-3004', 'Retail Store #42', 'store42@retail.com', '+1 555-3005', 'Miami, FL', 'Atlanta, GA', 25.7617, -80.1918, 33.749, -84.388, 'pending', null, 'AT-CST-FL5504', '5.1 kg', '40x30x20 cm', 'Apparel', 0, false,
+      ['HPT-7723-M6', 'Fashion House', 'info@fashionhouse.com', '+1 555-3004', 'Retail Store #42', 'store42@retail.com', '+1 555-3005', 'Miami, FL', 'Atlanta, GA', 25.7617, -80.1918, 33.749, -84.388, 'pending', null, 'HPT-CST-FL5504', '5.1 kg', '40x30x20 cm', 'Apparel', 0, false,
         new Date(now + days(3)).toISOString().split('T')[0],
         null],
-      ['AT-1198-B7', 'Book Depot', 'robert@bookdepot.com', '+1 555-2005', 'University Library', 'library@university.edu', '+1 555-3006', 'Boston, MA', 'Philadelphia, PA', 42.3601, -71.0589, 39.9526, -75.1652, 'delivered', 'AT-CUR-9D44RL', 'AT-CST-MA6605', '32.0 kg', '50x40x40 cm', 'Books & Documents', 100, false,
+      ['HPT-1198-B7', 'Book Depot', 'robert@bookdepot.com', '+1 555-2005', 'University Library', 'library@university.edu', '+1 555-3006', 'Boston, MA', 'Philadelphia, PA', 42.3601, -71.0589, 39.9526, -75.1652, 'delivered', 'HPT-CUR-9D44RL', 'HPT-CST-MA6605', '32.0 kg', '50x40x40 cm', 'Books & Documents', 100, false,
         new Date(now - days(1)).toISOString().split('T')[0],
         new Date(now - days(3)).toISOString()],
-      ['AT-6645-Z1', 'Fresh Foods Co.', 'anna@freshfoods.com', '+1 555-2006', 'Restaurant Group', 'orders@restgroup.com', '+1 555-3007', 'San Francisco, CA', 'Seattle, WA', 37.7749, -122.4194, 47.6062, -122.3321, 'paused', 'AT-CUR-7X92KP', 'AT-CST-CA7706', '45.0 kg', '80x60x40 cm', 'Perishables', 0, true,
+      ['HPT-6645-Z1', 'Fresh Foods Co.', 'anna@freshfoods.com', '+1 555-2006', 'Restaurant Group', 'orders@restgroup.com', '+1 555-3007', 'San Francisco, CA', 'Seattle, WA', 37.7749, -122.4194, 47.6062, -122.3321, 'paused', 'HPT-CUR-7X92KP', 'HPT-CST-CA7706', '45.0 kg', '80x60x40 cm', 'Perishables', 0, true,
         new Date(now + days(1.5)).toISOString().split('T')[0],
         new Date(now - hours(12)).toISOString()],
     ];
@@ -103,7 +103,7 @@ async function seed() {
 
     // Set paused_at for the paused shipment
     await pool.query('UPDATE shipments SET paused_at = $1 WHERE tracking_id = $2',
-      [new Date(now - hours(2)).toISOString(), 'AT-6645-Z1']);
+      [new Date(now - hours(2)).toISOString(), 'HPT-6645-Z1']);
 
     console.log(`✅ ${shipments.length} shipments created.`);
 
@@ -155,11 +155,11 @@ async function seed() {
   const { rows: [{ count: notifCount }] } = await pool.query('SELECT COUNT(*) as count FROM notifications');
   if (parseInt(notifCount) === 0) {
     const notifs = [
-      ['Courier Marcus Johnson picked up AT-8842-X9', 'Shipment is now in transit to Los Angeles, CA.', 'info'],
-      ['Shipment AT-3291-K4 out for delivery', 'Package is being delivered to City Hospital, Chicago.', 'info'],
-      ['Shipment AT-6645-Z1 PAUSED', 'Fresh Foods shipment paused — awaiting customs clearance.', 'warning'],
-      ['Shipment AT-1198-B7 delivered', 'Book Depot shipment delivered to University Library.', 'success'],
-      ['New customer registered', 'James Brown (AT-CST-GA8807) registered as individual customer.', 'info'],
+      ['Courier Marcus Johnson picked up HPT-8842-X9', 'Shipment is now in transit to Los Angeles, CA.', 'info'],
+      ['Shipment HPT-3291-K4 out for delivery', 'Package is being delivered to City Hospital, Chicago.', 'info'],
+      ['Shipment HPT-6645-Z1 PAUSED', 'Fresh Foods shipment paused — awaiting customs clearance.', 'warning'],
+      ['Shipment HPT-1198-B7 delivered', 'Book Depot shipment delivered to University Library.', 'success'],
+      ['New customer registered', 'James Brown (HPT-CST-GA8807) registered as individual customer.', 'info'],
     ];
 
     for (const n of notifs) {

@@ -104,16 +104,74 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 });
 
+// Public-safe column list for the tracking page (never expose emails/phones/internal notes)
+const PUBLIC_SHIPMENT_COLUMNS = 'tracking_id, sender_name, receiver_name, origin, destination, origin_lat, origin_lng, dest_lat, dest_lng, current_lat, current_lng, status, progress, is_paused, estimated_delivery, actual_delivery, cargo_type, weight, route_data, transport_modes, route_distance, route_duration, route_summary, created_at, departed_at, paused_at, total_paused_ms, multi_modal_segments, multi_modal_stops, pause_category, pause_reason, courier_id';
+
+// Pool-based fallback for the public tracking page.
+// The Supabase REST (PostgREST) read can lag behind writes made through the
+// long-lived pg pool connection, so a shipment created seconds ago may not yet
+// be visible via REST. The pool is always read-after-write consistent, so we
+// fall back to it whenever REST returns no row.
+async function trackViaPool(trackingId) {
+  const { rows } = await pool.query(
+    `SELECT ${PUBLIC_SHIPMENT_COLUMNS} FROM shipments WHERE tracking_id = $1`,
+    [trackingId]
+  );
+  const shipment = rows[0];
+  if (!shipment) return null;
+
+  const { rows: history } = await pool.query(
+    'SELECT status, location, lat, lng, notes, created_at FROM tracking_history WHERE tracking_id = $1 ORDER BY created_at DESC',
+    [trackingId]
+  );
+
+  let courier = null;
+  if (shipment.courier_id) {
+    const { rows: cRows } = await pool.query(
+      'SELECT courier_id, name, phone, vehicle_type, avatar, rating FROM couriers WHERE courier_id = $1',
+      [shipment.courier_id]
+    );
+    courier = cRows[0] || null;
+  }
+  return { shipment, history, courier };
+}
+
 // GET /api/shipments/:id/track — Public tracking endpoint (no auth required)
 router.get('/:id/track', async (req, res) => {
+  const trackingId = req.params.id;
   try {
     const { data: shipment, error: shipErr } = await supabase
       .from('shipments')
-      .select('tracking_id, sender_name, receiver_name, origin, destination, origin_lat, origin_lng, dest_lat, dest_lng, current_lat, current_lng, status, progress, is_paused, estimated_delivery, actual_delivery, cargo_type, weight, route_data, transport_modes, route_distance, route_duration, route_summary, created_at, departed_at, paused_at, total_paused_ms, multi_modal_segments, multi_modal_stops, pause_category, pause_reason, courier_id')
-      .eq('tracking_id', req.params.id)
-      .single();
+      .select(PUBLIC_SHIPMENT_COLUMNS)
+      .eq('tracking_id', trackingId)
+      .maybeSingle();
 
-    if (shipErr || !shipment) return res.status(404).json({ error: 'Shipment not found.' });
+    // PGRST116 = no rows. Anything else is a real backend error and must NOT
+    // be reported to the public tracking page as "Shipment not found".
+    if (shipErr && shipErr.code !== 'PGRST116') {
+      console.error('Track shipment supabase error:', JSON.stringify(shipErr));
+      // Fall through to the pool path rather than failing the request.
+    }
+
+    if (!shipment) {
+      // REST returned no row (lag or error) — fall back to the always-consistent pool.
+      let fallback = null;
+      try {
+        fallback = await trackViaPool(trackingId);
+      } catch (poolErr) {
+        console.error('Track pool fallback error:', poolErr.message);
+      }
+      if (!fallback) return res.status(404).json({ error: 'Shipment not found.' });
+
+      const jsonFields = ['route_data', 'transport_modes', 'multi_modal_segments', 'multi_modal_stops'];
+      for (const f of jsonFields) {
+        if (fallback.shipment[f] && typeof fallback.shipment[f] === 'string') {
+          try { fallback.shipment[f] = JSON.parse(fallback.shipment[f]); } catch (e) {}
+        }
+      }
+      enrichShipment(fallback.shipment);
+      return res.json({ shipment: fallback.shipment, history: fallback.history || [], courier: fallback.courier });
+    }
 
     // Parse JSON fields
     const jsonFields = ['route_data', 'transport_modes', 'multi_modal_segments', 'multi_modal_stops'];
@@ -128,7 +186,7 @@ router.get('/:id/track', async (req, res) => {
     const { data: history } = await supabase
       .from('tracking_history')
       .select('status, location, lat, lng, notes, created_at')
-      .eq('tracking_id', req.params.id)
+      .eq('tracking_id', trackingId)
       .order('created_at', { ascending: false });
 
     let courier = null;
@@ -137,7 +195,7 @@ router.get('/:id/track', async (req, res) => {
         .from('couriers')
         .select('courier_id, name, phone, vehicle_type, avatar, rating')
         .eq('courier_id', shipment.courier_id)
-        .single();
+        .maybeSingle();
       courier = courierData || null;
     }
 

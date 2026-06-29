@@ -88,7 +88,7 @@ async function main() {
   try {
     console.log('');
     console.log('╔══════════════════════════════════════════════════════════════╗');
-    console.log('║   NextTrace — Shipment Canonical Reconciliation  v3          ║');
+    console.log('║   Happy Paw Trace — Shipment Canonical Reconciliation  v3          ║');
     console.log('╚══════════════════════════════════════════════════════════════╝');
     console.log('');
 

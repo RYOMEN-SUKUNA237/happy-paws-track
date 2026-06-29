@@ -141,12 +141,12 @@ const Settings: React.FC = () => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   // Company settings state
-  const [companyName, setCompanyName] = useState('Next Trace Logistics');
-  const [companyEmail, setCompanyEmail] = useState('support@nexttracelogistics.com');
+  const [companyName, setCompanyName] = useState('Happy Paw Trace');
+  const [companyEmail, setCompanyEmail] = useState('support@happypawstransit.com');
   const [companyPhone, setCompanyPhone] = useState('+1 (412) 227-3484');
   const [companyAddress, setCompanyAddress] = useState('Wyoming');
   const [companyTaxId, setCompanyTaxId] = useState('');
-  const [companyWebsite, setCompanyWebsite] = useState('https://nexttracelogistics.com');
+  const [companyWebsite, setCompanyWebsite] = useState('https://happypawstransit.com');
   const [loadingCompany, setLoadingCompany] = useState(true);
   const [savingCompany, setSavingCompany] = useState(false);
   const [companyError, setCompanyError] = useState('');

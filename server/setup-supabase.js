@@ -26,7 +26,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 });
 
 async function run() {
-  console.log('\n🚀 Next Trace Logistics — Supabase Setup\n');
+  console.log('\n🚀 Happy Paw Trace — Supabase Setup\n');
   console.log(`📡 Project: ${SUPABASE_URL}\n`);
 
   // ─── 1. CREATE STORAGE BUCKETS ────────────────────────────────────
@@ -61,7 +61,7 @@ async function run() {
   // ─── 2. CREATE ADMIN USER IN SUPABASE AUTH ─────────────────────────
   console.log('\n─── Creating Admin User ───────────────────────────────');
 
-  const ADMIN_EMAIL = 'support@nexttracelogistics.com';
+  const ADMIN_EMAIL = 'support@happypawstransit.com';
   const ADMIN_PASSWORD = 'Black123$$roman'; // Change this after first login!
 
   // Check if user already exists
@@ -78,7 +78,7 @@ async function run() {
         password: ADMIN_PASSWORD,
         email_confirm: true, // Skip email confirmation
         user_metadata: {
-          full_name: 'Next Trace Admin',
+          full_name: 'Happy Paw Trace Admin',
           phone: '+1 (412) 227-3484',
         },
       });

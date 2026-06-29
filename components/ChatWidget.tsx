@@ -14,10 +14,10 @@ interface Message {
 }
 
 const getVisitorId = (): string => {
-  let id = localStorage.getItem('aura_visitor_id');
+  let id = localStorage.getItem('hpt_visitor_id');
   if (!id) {
     id = 'visitor_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-    localStorage.setItem('aura_visitor_id', id);
+    localStorage.setItem('hpt_visitor_id', id);
   }
   return id;
 };
@@ -25,8 +25,8 @@ const getVisitorId = (): string => {
 const ChatWidget: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [showIntro, setShowIntro] = useState(true);
-  const [name, setName] = useState(localStorage.getItem('aura_visitor_name') || '');
-  const [email, setEmail] = useState(localStorage.getItem('aura_visitor_email') || '');
+  const [name, setName] = useState(localStorage.getItem('hpt_visitor_name') || '');
+  const [email, setEmail] = useState(localStorage.getItem('hpt_visitor_email') || '');
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -45,8 +45,8 @@ const ChatWidget: React.FC = () => {
   // Start or resume conversation
   const startChat = async () => {
     if (!name.trim()) return;
-    localStorage.setItem('aura_visitor_name', name.trim());
-    if (email.trim()) localStorage.setItem('aura_visitor_email', email.trim());
+    localStorage.setItem('hpt_visitor_name', name.trim());
+    if (email.trim()) localStorage.setItem('hpt_visitor_email', email.trim());
 
     setLoading(true);
     try {
@@ -69,7 +69,7 @@ const ChatWidget: React.FC = () => {
   // Auto-resume conversation on open
   useEffect(() => {
     if (isOpen && showIntro && name) {
-      const savedName = localStorage.getItem('aura_visitor_name');
+      const savedName = localStorage.getItem('hpt_visitor_name');
       if (savedName) {
         startChat();
       }
@@ -186,7 +186,7 @@ const ChatWidget: React.FC = () => {
                   <Headphones size={18} className="text-white" />
                 </div>
                 <div>
-                  <p className="text-white font-semibold text-sm">Next Trace Logistics Support</p>
+                  <p className="text-white font-semibold text-sm">Happy Paw Trace Support</p>
                   <div className="flex items-center gap-1.5">
                     <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
                     <span className="text-gray-400 text-[11px]">We typically reply in minutes</span>

@@ -91,12 +91,12 @@ app.use('/api/settings', settingsRoutes);
 
 // Root route — minimal, no API map exposed
 app.get('/', (req, res) => {
-  res.json({ name: 'Next Trace Logistics API', status: 'running' });
+  res.json({ name: 'Happy Paw Trace API', status: 'running' });
 });
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '2.0.0', name: 'Next Trace Logistics API' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '2.0.0', name: 'Happy Paw Trace API' });
 });
 
 // 404 handler — don't reflect the URL back (prevents reflected content attacks)
@@ -116,7 +116,7 @@ app.use((err, req, res, next) => {
 // ─── START SERVER ────────────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
-    console.log(`\n🚀 Next Trace Logistics API Server running on http://localhost:${PORT}`);
+    console.log(`\n🚀 Happy Paw Trace API Server running on http://localhost:${PORT}`);
     console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
     console.log(`\nAPI Endpoints:`);
     console.log(`  POST   /api/auth/register`);

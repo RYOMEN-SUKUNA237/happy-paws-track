@@ -179,7 +179,7 @@ const Couriers: React.FC<CouriersProps> = ({ couriers, setCouriers, onRefresh })
                   <input
                     type="email" value={formData.email}
                     onChange={(e) => setFormData(p => ({ ...p, email: e.target.value }))}
-                    placeholder="john@auratrack.com"
+                    placeholder="john@happypawstransit.com"
                     className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:border-[#0a192f] focus:ring-1 focus:ring-[#0a192f] outline-none"
                   />
                 </div>

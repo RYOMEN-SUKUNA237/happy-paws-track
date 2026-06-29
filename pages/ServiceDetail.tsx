@@ -371,7 +371,7 @@ const CTASection: React.FC<{ service: ServiceDetailType }> = ({ service }) => {
                   </div>
                   <div>
                     <h4 className="font-semibold text-[#0a192f] text-sm">Email Us</h4>
-                    <p className="text-sm text-gray-500">support@nexttracelogistics.com</p>
+                    <p className="text-sm text-gray-500">support@happypawstransit.com</p>
                   </div>
                 </div>
               </div>
